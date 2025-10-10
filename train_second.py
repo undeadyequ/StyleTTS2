@@ -49,7 +49,7 @@ logger.addHandler(handler)
 
 
 @click.command()
-@click.option('-p', '--config_path', default='Configs/config.yml', type=str)
+@click.option('-p', '--config_path', default='Configs/config_libritts.yml', type=str)
 def main(config_path):
     config = yaml.safe_load(open(config_path))
     

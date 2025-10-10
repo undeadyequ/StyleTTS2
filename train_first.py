@@ -39,7 +39,7 @@ from accelerate.logging import get_logger
 logger = get_logger(__name__, log_level="DEBUG")
 
 @click.command()
-@click.option('-p', '--config_path', default='Configs/config.yml', type=str)
+@click.option('-p', '--config_path', default='Configs/config_libritts.yml', type=str)
 def main(config_path):
     config = yaml.safe_load(open(config_path))
 
@@ -400,7 +400,7 @@ def main(config_path):
                     en = asr[bib, :, :mel_length // 2].unsqueeze(0)
                                         
                     F0_real, _, _ = model.pitch_extractor(gt.unsqueeze(1))
-                    F0_real = F0_real.unsqueeze(0)
+                    #F0_real = F0_real.unsqueeze(0)
                     s = model.style_encoder(gt.unsqueeze(1))
                     real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
                     

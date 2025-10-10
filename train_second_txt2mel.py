@@ -134,7 +134,7 @@ def main(config_path):
 
     # DP
     for key in model:
-        if key != "mpd" and key != "msd" and key != "wd":
+        if key != "md":
             model[key] = MyDataParallel(model[key])
 
     start_epoch = 0
@@ -151,7 +151,7 @@ def main(config_path):
                                                            first_stage_path,
                                                            load_only_params=True,
                                                            ignore_modules=['bert', 'bert_encoder', 'predictor',
-                                                                           'predictor_encoder', 'msd', 'mpd', 'wd',
+                                                                           'predictor_encoder', 'md',
                                                                            'diffusion'])  # keep starting epoch for tensorboard log
 
             # these epochs should be counted from the start epoch
@@ -163,16 +163,11 @@ def main(config_path):
         else:
             raise ValueError('You need to specify the path to the first stage model.')
 
-    gl = GeneratorLoss(model.mpd, model.msd).to(device)
-    dl = DiscriminatorLoss(model.mpd, model.msd).to(device)
-    wl = WavLMLoss(model_params.slm.model,
-                   model.wd,
-                   sr,
-                   model_params.slm.sr).to(device)
+    gl = GeneratorLossMel(model.md).to(device)
+    dl = DiscriminatorLossMel(model.md).to(device)
 
     gl = MyDataParallel(gl)
     dl = MyDataParallel(dl)
-    wl = MyDataParallel(wl)
 
     sampler = DiffusionSampler(
         model.diffusion.diffusion,
@@ -236,15 +231,6 @@ def main(config_path):
 
     running_std = []
 
-    slmadv_params = Munch(config['slmadv_params'])
-    slmadv = SLMAdversarialLoss(model, wl, sampler,
-                                slmadv_params.min_len,
-                                slmadv_params.max_len,
-                                batch_percentage=slmadv_params.batch_percentage,
-                                skip_update=slmadv_params.iter,
-                                sig=slmadv_params.sig
-                                )
-
     for epoch in range(start_epoch, epochs):
         running_loss = 0
         start_time = time.time()
@@ -254,8 +240,7 @@ def main(config_path):
         model.predictor.train()
         model.bert_encoder.train()
         model.bert.train()
-        model.msd.train()
-        model.mpd.train()
+        model.md.train()
 
         if epoch >= diff_epoch:
             start_ds = True
@@ -413,8 +398,7 @@ def main(config_path):
                 optimizer.zero_grad()
                 d_loss = dl(wav.detach(), y_rec.detach()).mean()
                 d_loss.backward()
-                optimizer.step('msd')
-                optimizer.step('mpd')
+                optimizer.step('md')
             else:
                 d_loss = 0
 
@@ -426,7 +410,6 @@ def main(config_path):
                 loss_gen_all = gl(wav, y_rec).mean()
             else:
                 loss_gen_all = 0
-            loss_lm = wl(wav.detach().squeeze(), y_rec.squeeze()).mean()
 
             loss_ce = 0
             loss_dur = 0
@@ -451,7 +434,6 @@ def main(config_path):
                      loss_params.lambda_norm * loss_norm_rec + \
                      loss_params.lambda_dur * loss_dur + \
                      loss_params.lambda_gen * loss_gen_all + \
-                     loss_params.lambda_slm * loss_lm + \
                      loss_params.lambda_sty * loss_sty + \
                      loss_params.lambda_diff * loss_diff
 
@@ -483,22 +465,7 @@ def main(config_path):
                     ref_lengths = input_lengths
                     ref_texts = texts
 
-                slm_out = slmadv(i,
-                                 y_rec_gt,
-                                 y_rec_gt_pred,
-                                 waves,
-                                 mel_input_length,
-                                 ref_texts,
-                                 ref_lengths, use_ind, s_trg.detach(), ref if multispeaker else None)
-
-                if slm_out is None:
-                    continue
-
-                d_loss_slm, loss_gen_lm, y_pred = slm_out
-
-                # SLM generator loss
-                optimizer.zero_grad()
-                loss_gen_lm.backward()
+                #d_loss_slm, loss_gen_lm, y_pred = slm_out
 
                 # compute the gradient norm
                 total_norm = {}
@@ -511,60 +478,29 @@ def main(config_path):
                     total_norm[key] = total_norm[key] ** 0.5
 
                 # gradient scaling
-                if total_norm['predictor'] > slmadv_params.thresh:
-                    for key in model.keys():
-                        for p in model[key].parameters():
-                            if p.grad is not None:
-                                p.grad *= (1 / total_norm['predictor'])
-
-                for p in model.predictor.duration_proj.parameters():
-                    if p.grad is not None:
-                        p.grad *= slmadv_params.scale
-
-                for p in model.predictor.lstm.parameters():
-                    if p.grad is not None:
-                        p.grad *= slmadv_params.scale
-
-                for p in model.diffusion.parameters():
-                    if p.grad is not None:
-                        p.grad *= slmadv_params.scale
-
                 optimizer.step('bert_encoder')
                 optimizer.step('bert')
                 optimizer.step('predictor')
                 optimizer.step('diffusion')
 
-                # SLM discriminator loss
-                if d_loss_slm != 0:
-                    optimizer.zero_grad()
-                    d_loss_slm.backward(retain_graph=True)
-                    optimizer.step('wd')
-
-            else:
-                d_loss_slm, loss_gen_lm = 0, 0
-
             iters = iters + 1
 
             if (i + 1) % log_interval == 0:
                 logger.info(
-                    'Epoch [%d/%d], Step [%d/%d], Loss: %.5f, Disc Loss: %.5f, Dur Loss: %.5f, CE Loss: %.5f, Norm Loss: %.5f, F0 Loss: %.5f, LM Loss: %.5f, Gen Loss: %.5f, Sty Loss: %.5f, Diff Loss: %.5f, DiscLM Loss: %.5f, GenLM Loss: %.5f'
+                    'Epoch [%d/%d], Step [%d/%d], Loss: %.5f, Disc Loss: %.5f, Dur Loss: %.5f, CE Loss: %.5f, Norm Loss: %.5f, F0 Loss: %.5f, Gen Loss: %.5f, Sty Loss: %.5f, Diff Loss: %.5f'
                     % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, running_loss / log_interval, d_loss,
-                       loss_dur, loss_ce, loss_norm_rec, loss_F0_rec, loss_lm, loss_gen_all, loss_sty, loss_diff,
-                       d_loss_slm, loss_gen_lm))
+                       loss_dur, loss_ce, loss_norm_rec, loss_F0_rec, loss_gen_all, loss_sty, loss_diff
+                       ))
 
                 writer.add_scalar('train/mel_loss', running_loss / log_interval, iters)
                 writer.add_scalar('train/gen_loss', loss_gen_all, iters)
                 writer.add_scalar('train/d_loss', d_loss, iters)
                 writer.add_scalar('train/ce_loss', loss_ce, iters)
                 writer.add_scalar('train/dur_loss', loss_dur, iters)
-                writer.add_scalar('train/slm_loss', loss_lm, iters)
                 writer.add_scalar('train/norm_loss', loss_norm_rec, iters)
                 writer.add_scalar('train/F0_loss', loss_F0_rec, iters)
                 writer.add_scalar('train/sty_loss', loss_sty, iters)
                 writer.add_scalar('train/diff_loss', loss_diff, iters)
-                writer.add_scalar('train/d_loss_slm', d_loss_slm, iters)
-                writer.add_scalar('train/gen_loss_slm', loss_gen_lm, iters)
-
                 running_loss = 0
 
                 print('Time elasped:', time.time() - start_time)

@@ -1,11 +1,11 @@
-log_dir: "Models/LibriTTS"
+log_dir: "/hdd/ckpt/styletts2_libriTTS/first"
 first_stage_path: "first_stage.pth"
-save_freq: 1
+save_freq: 4
 log_interval: 10
 device: "cuda"
 epochs_1st: 50 # number of epochs for first stage training (pre-training)
 epochs_2nd: 30 # number of peochs for second stage training (joint training)
-batch_size: 16
+batch_size: 4
 max_len: 300 # maximum number of frames
 pretrained_model: ""
 second_stage_load_pretrained: true # set to true if the pre-trained model is for 2nd stage
@@ -17,8 +17,8 @@ ASR_path: "Utils/ASR/epoch_00080.pth"
 PLBERT_dir: 'Utils/PLBERT/'
 
 data_params:
-  train_data: "Data/train_list.txt"
-  val_data: "Data/val_list.txt"
+  train_data: "Data/train_list_libritts_spk_small.txt"
+  val_data: "Data/val_list_libritts_spk_small.txt"
   root_path: ""
   OOD_data: "Data/OOD_texts.txt"
   min_length: 50 # sample until texts with this size are obtained for OOD texts

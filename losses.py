@@ -188,8 +188,43 @@ class DiscriminatorLoss(torch.nn.Module):
         d_loss = loss_disc_s + loss_disc_f + loss_rel
         
         return d_loss.mean()
-   
-    
+
+
+class GeneratorLossMel(torch.nn.Module):
+
+    def __init__(self, mpd):
+        super(GeneratorLossMel, self).__init__()
+        self.mpd = mpd
+
+    def forward(self, y, y_hat):
+        y_df_hat_r, y_df_hat_g, fmap_f_r, fmap_f_g = self.mpd(y, y_hat)
+        loss_fm_f = feature_loss(fmap_f_r, fmap_f_g)
+        loss_gen_f, losses_gen_f = generator_loss(y_df_hat_g)
+
+        loss_rel = generator_TPRLS_loss(y_df_hat_r, y_df_hat_g)
+
+        loss_gen_all = loss_gen_f + loss_fm_f + loss_rel
+
+        return loss_gen_all.mean()
+
+
+class DiscriminatorLossMel(torch.nn.Module):
+
+    def __init__(self, mpd):
+        super(DiscriminatorLossMel, self).__init__()
+        self.mpd = mpd
+
+    def forward(self, y, y_hat):
+        # MPD
+        y_df_hat_r, y_df_hat_g, _, _ = self.mpd(y, y_hat)
+        loss_disc_f, losses_disc_f_r, losses_disc_f_g = discriminator_loss(y_df_hat_r, y_df_hat_g)
+
+        loss_rel = discriminator_TPRLS_loss(y_df_hat_r, y_df_hat_g)
+        d_loss = loss_disc_f + loss_rel
+
+        return d_loss.mean()
+
+
 class WavLMLoss(torch.nn.Module):
 
     def __init__(self, model, wd, model_sr, slm_sr=16000):
