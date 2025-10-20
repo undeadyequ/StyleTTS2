@@ -9,6 +9,7 @@ import soundfile as sf
 import librosa
 
 import torch
+from exceptiongroup import catch
 from torch import nn
 import torch.nn.functional as F
 import torchaudio
@@ -116,7 +117,11 @@ class FilePathDataset(torch.utils.data.Dataset):
         acoustic_feature = acoustic_feature[:, :(length_feature - length_feature % 2)]
         
         # get reference sample
-        ref_data = (self.df[self.df[2] == str(speaker_id)]).sample(n=1).iloc[0].tolist()
+        ############# TEMP code
+        try:
+            ref_data = (self.df[self.df[2] == str(data[2])]).sample(n=1).iloc[0].tolist()
+        except:
+            print("speaker_id", data, speaker_id)
         ref_mel_tensor, ref_label = self._load_data(ref_data[:3])
         
         # get OOD text
@@ -141,9 +146,10 @@ class FilePathDataset(torch.utils.data.Dataset):
         wave, sr = sf.read(osp.join(self.root_path, wave_path))
         if wave.shape[-1] == 2:
             wave = wave[:, 0].squeeze()
-        if sr != 24000:
-            wave = librosa.resample(wave, orig_sr=sr, target_sr=24000)
-            print(wave_path, sr)
+        ###### TEMP code
+        #if sr != 24000:
+        #    wave = librosa.resample(wave, orig_sr=sr, target_sr=24000)
+        #    print(wave_path, sr)
             
         wave = np.concatenate([np.zeros([5000]), wave, np.zeros([5000])], axis=0)
         

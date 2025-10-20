@@ -19,8 +19,6 @@ from Modules.diffusion.sampler import KDiffusion, LogNormalDistribution
 from Modules.diffusion.modules import Transformer1d, StyleTransformer1d
 from Modules.diffusion.diffusion import AudioDiffusionConditional
 
-from Modules.discriminators import MultiPeriodDiscriminator, MultiResSpecDiscriminator, WavLMDiscriminator
-
 from munch import Munch
 import yaml
 
@@ -645,13 +643,8 @@ def build_model(args, text_aligner, pitch_extractor, bert):
                           gen_istft_n_fft=args.decoder.gen_istft_n_fft,
                           gen_istft_hop_size=args.decoder.gen_istft_hop_size)
     else:
-        from Modules.hifigan import Decoder
-        decoder = Decoder(dim_in=args.hidden_dim, style_dim=args.style_dim, dim_out=args.n_mels,
-                          resblock_kernel_sizes=args.decoder.resblock_kernel_sizes,
-                          upsample_rates=args.decoder.upsample_rates,
-                          upsample_initial_channel=args.decoder.upsample_initial_channel,
-                          resblock_dilation_sizes=args.decoder.resblock_dilation_sizes,
-                          upsample_kernel_sizes=args.decoder.upsample_kernel_sizes)
+        from Modules.hifigan_txt2mel import Decoder
+        decoder = Decoder(dim_in=args.hidden_dim, style_dim=args.style_dim, residual_dim=64, dim_out=args.n_mels)
 
     text_encoder = TextEncoder(channels=args.hidden_dim, kernel_size=5, depth=args.n_layer, n_symbols=args.n_token)
 
@@ -693,6 +686,8 @@ def build_model(args, text_aligner, pitch_extractor, bert):
     diffusion.diffusion.net = transformer
     diffusion.unet = transformer
 
+    discriminator = Discriminator2d(dim_in=args.dim_in, num_domains=1, max_conv_dim=args.hidden_dim)
+
     nets = Munch(
         bert=bert,
         bert_encoder=nn.Linear(bert.config.hidden_size, args.hidden_dim),
@@ -708,13 +703,8 @@ def build_model(args, text_aligner, pitch_extractor, bert):
         text_aligner=text_aligner,
         pitch_extractor=pitch_extractor,
 
-        mpd=MultiPeriodDiscriminator(),
-        msd=MultiResSpecDiscriminator(),
-
-        # slm discriminator head
-        wd=WavLMDiscriminator(args.slm.hidden, args.slm.nlayers, args.slm.initial_channel),
+        discriminator=discriminator
     )
-
     return nets
 
 

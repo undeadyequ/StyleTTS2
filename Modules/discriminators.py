@@ -28,7 +28,6 @@ def stft(x, fft_size, hop_size, win_length, window):
 
 class SpecDiscriminator(nn.Module):
     """docstring for Discriminator."""
-
     def __init__(self, fft_size=1024, shift_size=120, win_length=600, window="hann_window", use_spectral_norm=False):
         super(SpecDiscriminator, self).__init__()
         norm_f = weight_norm if use_spectral_norm == False else spectral_norm
@@ -43,7 +42,6 @@ class SpecDiscriminator(nn.Module):
             norm_f(nn.Conv2d(32, 32, kernel_size=(3, 9), stride=(1,2), padding=(1, 4))),
             norm_f(nn.Conv2d(32, 32, kernel_size=(3, 3), stride=(1,1), padding=(1, 1))),
         ])
-
         self.out = norm_f(nn.Conv2d(32, 1, 3, 1, 1))
 
     def forward(self, y):
