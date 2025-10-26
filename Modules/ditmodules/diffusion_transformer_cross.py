@@ -6,10 +6,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from drawspeech.utilities.vis import save_plot
+from utilities.vis import save_plot
 import math
-from drawspeech.modules.ditmodules.blockAttention import MultiHeadAttention, MultiHeadAttentionCross
-from drawspeech.utilities.mask import sequence_mask
+from Modules.ditmodules.blockAttention import MultiHeadAttention, MultiHeadAttentionCross
+from utilities.mask import sequence_mask
 
 class FFN(nn.Module):
     def __init__(self, in_channels, out_channels, filter_channels, kernel_size, p_dropout=0., gin_channels=0):

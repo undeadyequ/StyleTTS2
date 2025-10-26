@@ -1,8 +1,8 @@
 import math
 import torch
 import torch.nn as nn
-from drawspeech.modules.ditmodules.diffusion_transformer import DiTConVBlock
-from drawspeech.modules.ditmodules.diffusion_transformer_cross import DiTConVBlockCross
+from Modules.ditmodules.diffusion_transformer import DiTConVBlock
+from Modules.ditmodules.diffusion_transformer_cross import DiTConVBlockCross
 from torch.nn.utils import weight_norm
 import torch.nn.functional as F
 
@@ -181,14 +181,3 @@ class Decoder(nn.Module):
             return output * mask, attn_maps
         else:
             return output * mask
-
-    def p_sample(self, z):
-        pass
-
-    def q_sample(self, z):
-        noise = torch.randn()
-        z_sample = self.add_noise(z, noise)
-        return z_sample, noise
-
-    def loss(self, z, noise):
-        return F.f1_loss(z - noise)

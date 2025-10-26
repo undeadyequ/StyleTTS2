@@ -1,29 +1,16 @@
-import os
-import os.path as osp
-import re
-import sys
-import yaml
 import shutil
-import numpy as np
-import torch
 import click
 import warnings
+
+import torch
 
 warnings.simplefilter('ignore')
 
 # load packages
 import random
-import yaml
-from munch import Munch
-import numpy as np
-import torch
-from torch import nn
-import torch.nn.functional as F
-import torchaudio
-import librosa
 import json
 
-from models_txt2mel import *
+from models_txt2mel_ldm import *
 from meldataset import build_dataloader
 from utils import *
 from losses import *
@@ -42,6 +29,7 @@ from attrdict import AttrDict
 from Modules.hifi_gan.vocoder import Generator
 import glob
 from utils import r1_reg, adv_loss
+from utilities.model_util import convert_4d_to_3d, convert_3d_to_4d
 
 def scan_checkpoint(cp_dir, prefix):
     pattern = os.path.join(cp_dir, prefix + '*')
@@ -63,7 +51,7 @@ logger = get_logger(__name__, log_level="DEBUG")
 
 
 @click.command()
-@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel.yml', type=str)
+@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_ldm_v3.yml', type=str)
 def main(config_path):
     config = yaml.safe_load(open(config_path))
 
@@ -96,12 +84,12 @@ def main(config_path):
     root_path = data_params['root_path']
     min_length = data_params['min_length']
     OOD_data = data_params['OOD_data']
-
     max_len = config.get('max_len', 200)
+    z_rate = 4
+    need_wav_norm = data_params['need_wav_norm']
 
     # load data
     train_list, val_list = get_data_path_list(train_path, val_path)
-
     train_dataloader = build_dataloader(train_list,
                                         root_path,
                                         OOD_data=OOD_data,
@@ -109,8 +97,8 @@ def main(config_path):
                                         batch_size=batch_size,
                                         num_workers=2,
                                         dataset_config={},
-                                        device=device)
-
+                                        device=device,
+                                        need_wav_norm=need_wav_norm)  # True in VAE of Drawspeech
     val_dataloader = build_dataloader(val_list,
                                       root_path,
                                       OOD_data=OOD_data,
@@ -119,7 +107,8 @@ def main(config_path):
                                       validation=True,
                                       num_workers=0,
                                       device=device,
-                                      dataset_config={})
+                                      dataset_config={},
+                                      need_wav_norm=need_wav_norm)
 
     with accelerator.main_process_first():
         # load pretrained ASR model
@@ -145,12 +134,9 @@ def main(config_path):
 
     model_params = recursive_munch(config['model_params'])
     multispeaker = model_params.multispeaker
-    model = build_model(model_params, text_aligner, pitch_extractor, plbert)
+    model = build_model(model_params, config['ldm'], text_aligner, pitch_extractor, plbert)
 
     best_loss = float('inf')  # best test loss
-    loss_train_record = list([])
-    loss_test_record = list([])
-
     loss_params = Munch(config['loss_params'])
     TMA_epoch = loss_params.TMA_epoch
 
@@ -193,26 +179,29 @@ def main(config_path):
     for epoch in range(start_epoch, epochs):
         running_loss = 0
         start_time = time.time()
-        criterion = nn.L1Loss()
-
 
         _ = [model[key].train() for key in model]
 
         for i, batch in enumerate(train_dataloader):
             waves = batch[0]
             batch = [b.to(device) for b in batch[1:]]
-            texts, input_lengths, _, _, mels, mel_input_length, _ = batch
+            texts, input_lengths, _, _, mels, mel_input_length, _ = batch  # need normalize wav before to_mel
+
+            # Get z related
+            mels_convert = mels.permute(0, 2, 1).unsqueeze(1)  # mels (b, d, l) -> mel_convert: (b, 1, 1166, 80)
+            encoder_posterior = model.decoder.encode_first_stage(mels_convert)
+            z = model.decoder.get_first_stage_encoding(encoder_posterior).detach()  # (b, c, l, d)
+            z = convert_4d_to_3d(z)  # (b, c*d, l)
+            z_length = mel_input_length // z_rate
 
             with torch.no_grad():
                 mask = length_to_mask(mel_input_length // (2 ** n_down)).to('cuda')
                 text_mask = length_to_mask(input_lengths).to(texts.device)
-
+            # text aligner
             ppgs, s2s_pred, s2s_attn = model.text_aligner(mels, mask, texts)
-
             s2s_attn = s2s_attn.transpose(-1, -2)
             s2s_attn = s2s_attn[..., 1:]
             s2s_attn = s2s_attn.transpose(-1, -2)
-
             with torch.no_grad():
                 attn_mask = (~mask).unsqueeze(-1).expand(mask.shape[0], mask.shape[1],
                                                          text_mask.shape[-1]).float().transpose(-1, -2)
@@ -220,7 +209,6 @@ def main(config_path):
                                                                                   text_mask.shape[1],
                                                                                   mask.shape[-1]).float()
                 attn_mask = (attn_mask < 1)
-
             s2s_attn.masked_fill_(attn_mask, 0.0)
 
             with torch.no_grad():
@@ -235,66 +223,59 @@ def main(config_path):
                 asr = (t_en @ s2s_attn)
             else:
                 asr = (t_en @ s2s_attn_mono)
+            asr_z = F.interpolate(asr, size=asr.size(-1) // z_rate, mode="linear", align_corners=True)
 
             # get clips
             mel_input_length_all = accelerator.gather(mel_input_length)  # for balanced load
             mel_len = min([int(mel_input_length_all.min().item() / 2 - 1), max_len // 2])
             mel_len_st = int(mel_input_length.min().item() / 2 - 1)
+            z_len, z_len_st = mel_len // z_rate, mel_len_st // z_rate
+            with torch.no_grad():  # get
+                z_length_cut = torch.where(z_length < z_len * 2, z_length, torch.tensor(z_len * 2))
+                z_cut_mask = length_to_mask(z_length_cut).to('cuda')
 
-            en = []
-            gt = []
+            en, en_z = [], []
+            gt, gt_z = [], []
             wav = []
-            st = []
+            st, st_z = [], []
 
             for bib in range(len(mel_input_length)):
                 mel_length = int(mel_input_length[bib].item() / 2)
-
                 random_start = np.random.randint(0, mel_length - mel_len)
-                en.append(asr[bib, :, random_start:random_start + mel_len])
-                gt.append(mels[bib, :, (random_start * 2):((random_start + mel_len) * 2)])
+                random_start_z = random_start // z_rate
+                en.append(asr[bib, :, random_start : random_start + mel_len])
+                gt.append(mels[bib, :, (random_start * 2) : ((random_start + mel_len) * 2)])  # why * 2
+                en_z.append(asr_z[bib, :, random_start_z : random_start_z + z_len])
+                gt_z.append(z[bib, :, (random_start_z * 2) : ((random_start_z + z_len) * 2)])
 
                 y = waves[bib][(random_start * 2) * 300:((random_start + mel_len) * 2) * 300]
                 wav.append(torch.from_numpy(y).to(device))
 
                 # style reference (better to be different from the GT)
                 random_start = np.random.randint(0, mel_length - mel_len_st)
-                st.append(mels[bib, :, (random_start * 2):((random_start + mel_len_st) * 2)])
+                random_start_z = random_start // z_rate
+                st.append(mels[bib, :, (random_start * 2) : ((random_start + mel_len_st) * 2)])
+                st_z.append(z[bib, :, (random_start_z * 2) : ((random_start_z + z_len_st) * 2)])
 
-            en = torch.stack(en)
-            gt = torch.stack(gt).detach()
-            st = torch.stack(st).detach()
-
+            en, en_z = torch.stack(en), torch.stack(en_z).detach()
+            gt, gt_z = torch.stack(gt).detach(), torch.stack(gt_z).detach()
+            st, st_z = torch.stack(st).detach(), torch.stack(st_z).detach()
 
             # clip too short to be used by the style encoder
             if gt.shape[-1] < 80:
                 continue
 
             with torch.no_grad():
-                real_norm = log_norm(gt.unsqueeze(1)).squeeze(1).detach()
+                real_norm = log_norm(gt.unsqueeze(1)).squeeze(1).detach() # (b, l)
                 F0_real, _, _ = model.pitch_extractor(gt.unsqueeze(1))
+                real_norm_z = F.interpolate(real_norm.unsqueeze(1), size=real_norm.size(-1) // z_rate, mode="linear", align_corners=True)
+                F0_real_z = F.interpolate(F0_real.unsqueeze(1), size=F0_real.size(-1) // z_rate, mode="linear", align_corners=True)
 
-            s = model.style_encoder(st.unsqueeze(1) if multispeaker else gt.unsqueeze(1))
-
-            mel_rec = model.decoder(en, F0_real, real_norm, s)
-
-            # discriminator loss
-            if epoch >= TMA_epoch:
-                optimizer.zero_grad()
-                gt.requires_grad_()
-                out, _ = model.discriminator(gt.unsqueeze(1))
-                loss_real = adv_loss(out, 1)
-                loss_reg = r1_reg(out, gt)
-                out, _ = model.discriminator(mel_rec.detach().unsqueeze(1))
-                loss_fake = adv_loss(out, 0)
-                d_loss = loss_real + loss_fake + loss_reg
-                accelerator.backward(d_loss)
-                optimizer.step('discriminator')
-            else:
-                d_loss = 0
+            #s = model.style_encoder(st.unsqueeze(1) if multispeaker else gt.unsqueeze(1))
+            s_z = model.style_encoder(st_z.unsqueeze(1) if multispeaker else gt_z.unsqueeze(1))
 
             # generator loss (L1 part)
             optimizer.zero_grad()
-            loss_mel = criterion(mel_rec.squeeze(), gt.detach())
             if epoch >= TMA_epoch:  # start TMA training
                 loss_s2s = 0
                 for _s2s_pred, _text_input, _text_length in zip(s2s_pred, texts, input_lengths):
@@ -305,24 +286,23 @@ def main(config_path):
                 loss_s2s = 0
                 loss_mono = 0
 
-            # generator loss (adversarial part)
-            with torch.no_grad():
-                _, f_real = model.discriminator(gt.unsqueeze(1))
-            out_rec, f_fake = model.discriminator(mel_rec.unsqueeze(1))
-            loss_adv = adv_loss(out_rec, 1)
-            # feature matching loss
-            loss_fm = 0
-            for m in range(len(f_real)):
-                for k in range(len(f_real[m])):
-                    loss_fm += torch.mean(torch.abs(f_real[m][k] - f_fake[m][k]))
+            # ldm loss
+            #en_z_sampled, noise = model.decoder.q_sample(en_z)
+            ## cut pe to equal with en_z
+            if F0_real_z.size(-1) > en_z.size(-1) * 2:
+                F0_real_z = F0_real_z[...,:-1]
+                real_norm_z = real_norm_z[...,:-1]
+            cond = (en_z, F0_real_z, real_norm_z, s_z, z_length_cut, ~z_cut_mask)  # TEMP mel_len, amsk need check
+            gd_z_4d = convert_3d_to_4d(gt_z, channel=8, converted_z_dim=160)
+            loss_diff_mono_vlb, loss_dict = model.decoder(gd_z_4d, cond)  # TEMP
+            loss_diff, loss_monoMask, loss_vlb = loss_dict["train/loss_simple"], loss_dict["train/loss_monoAttn"], loss_dict["train/loss_vlb"]
 
-            g_loss = loss_params.lambda_mel * loss_mel + \
-                loss_params.lambda_adv * loss_adv + \
-                loss_params.lambda_fm * loss_fm + \
+            g_loss = loss_params.lambda_mel + \
+                loss_params.lambda_adv * loss_diff_mono_vlb + \
                 loss_params.lambda_mono * loss_mono + \
                 loss_params.lambda_s2s * loss_s2s
 
-            running_loss += accelerator.gather(loss_mel).mean().item()
+            running_loss += accelerator.gather(loss_diff_mono_vlb).mean().item()
             accelerator.backward(g_loss)
             optimizer.step('text_encoder')
             optimizer.step('style_encoder')
@@ -334,19 +314,19 @@ def main(config_path):
 
             iters = iters + 1
             if (i + 1) % log_interval == 0 and accelerator.is_main_process:
-                if isinstance(d_loss, torch.Tensor):
-                    d_loss = d_loss.item()
+                if isinstance(loss_diff_mono_vlb, torch.Tensor):
+                    loss_diff_mono_vlb = loss_diff_mono_vlb.item()
                 log_print(
-                    'Epoch [%d/%d], Step [%d/%d], Mel Loss: %.5f, Gen Loss: %.5f, Disc Loss: %.5f, Mono Loss: %.5f, S2S Loss: %.5f'
-                    % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, running_loss / log_interval, g_loss, d_loss, loss_mono, loss_s2s), logger)
+                    'Epoch [%d/%d], Step [%d/%d], LDMdiff_mean Loss: %.5f, Gen Loss: %.5f, LDMdiff Loss: %.5f, Mono Loss: %.5f, MonoMask Loss: %.5f, S2S Loss: %.5f'
+                    % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, loss_diff_mono_vlb / log_interval, g_loss, loss_diff_mono_vlb, loss_mono, loss_monoMask, loss_s2s), logger)
             if (i + 1) % log_interval == 0:
                 logger.info(
-                    'Epoch [%d/%d], Step [%d/%d], Mel Loss: %.5f, Adv Loss: %.5f, Disc Loss: %.5f, Mono Loss: %.5f, S2S Loss: %.5f'
+                    'Epoch [%d/%d], Step [%d/%d], LDMdiff_mean Loss: %.5f, Gen Loss: %.5f, LDMdiff Loss: %.5f, Mono Loss: %.5f, MonoMask Loss: %.5f, S2S Loss: %.5f'
                     % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, running_loss / log_interval,
-                       loss_adv.item(), d_loss, loss_mono, loss_s2s))
-                writer.add_scalar('train/mel_loss', running_loss / log_interval, iters)
+                       g_loss, loss_diff_mono_vlb, loss_mono, loss_monoMask, loss_s2s))
+                writer.add_scalar('train/LDMdiff_mean', running_loss / log_interval, iters)
                 writer.add_scalar('train/gen_loss', g_loss, iters)
-                writer.add_scalar('train/d_loss', d_loss, iters)
+                writer.add_scalar('train/loss_diff', loss_diff_mono_vlb, iters)
                 writer.add_scalar('train/mono_loss', loss_mono, iters)
                 writer.add_scalar('train/s2s_loss', loss_s2s, iters)
 
@@ -365,6 +345,13 @@ def main(config_path):
                 waves = batch[0]
                 batch = [b.to(device) for b in batch[1:]]
                 texts, input_lengths, _, _, mels, mel_input_length, _ = batch
+
+                # Get z related
+                z_length = mel_input_length // z_rate
+                mels_convert = mels.permute(0, 2, 1).unsqueeze(1)  # mels (b, d, l) -> mel_convert: (b, 1, 1166, 80)
+                encoder_posterior = model.decoder.encode_first_stage(mels_convert)
+                z = model.decoder.get_first_stage_encoding(encoder_posterior).detach()  # (b, c, l, d)
+                z = convert_4d_to_3d(z)  # (b, c*d, l)
 
                 with torch.no_grad():
                     mask = length_to_mask(mel_input_length // (2 ** n_down)).to('cuda')
@@ -387,34 +374,53 @@ def main(config_path):
                 t_en = model.text_encoder(texts, input_lengths, text_mask)
 
                 asr = (t_en @ s2s_attn)
+                asr_z = F.interpolate(asr, size=asr.size(-1) // z_rate, mode="linear", align_corners=True)
 
                 # get clips
                 mel_input_length_all = accelerator.gather(mel_input_length)  # for balanced load
-                mel_len = min([int(mel_input_length.min().item() / 2 - 1), max_len // 2])
 
-                en = []
-                gt = []
+                mel_len = min([int(mel_input_length.min().item() / 2 - 1), max_len // 2])
+                z_len = mel_len // z_rate
+
+                with torch.no_grad():  # get
+                    z_length_cut = torch.where(z_length < z_len * 2, z_length, torch.tensor(z_len * 2))
+                    z_cut_mask = length_to_mask(z_length_cut).to('cuda')
+
+
+                en, en_z = [], []
+                gt, gt_z = [], []
                 wav = []
                 for bib in range(len(mel_input_length)):
                     mel_length = int(mel_input_length[bib].item() / 2)
 
                     random_start = np.random.randint(0, mel_length - mel_len)
+                    random_start_z = random_start // z_rate
                     en.append(asr[bib, :, random_start:random_start + mel_len])
                     gt.append(mels[bib, :, (random_start * 2):((random_start + mel_len) * 2)])
                     y = waves[bib][(random_start * 2) * 300:((random_start + mel_len) * 2) * 300]
                     wav.append(torch.from_numpy(y).to('cuda'))
 
-                en = torch.stack(en)
-                gt = torch.stack(gt).detach()
+                    en_z.append(asr_z[bib, :, random_start_z : random_start_z + z_len])
+                    gt_z.append(z[bib, :, (random_start_z * 2) : ((random_start_z + z_len) * 2)])
+
+                en, en_z = torch.stack(en), torch.stack(en_z)
+                gt, gt_z = torch.stack(gt).detach(), torch.stack(gt_z).detach()
 
                 F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1))
-                s = model.style_encoder(gt.unsqueeze(1))
                 real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
-                mel_rec = model.decoder(en, F0_real, real_norm, s)
 
-                loss_mel = criterion(mel_rec.squeeze(), gt.detach())
+                s_z = model.style_encoder(gt_z.unsqueeze(1))
+                real_norm_z = F.interpolate(real_norm.unsqueeze(1), size=real_norm.size(-1) // z_rate, mode="linear", align_corners=True)
+                F0_real_z = F.interpolate(F0_real.unsqueeze(1), size=F0_real.size(-1) // z_rate, mode="linear", align_corners=True)
 
-                loss_test += accelerator.gather(loss_mel).mean().item()
+                ## cut pe to equal with en_zg
+                if F0_real_z.size(-1) > en_z.size(-1) * 2:
+                    F0_real_z = F0_real_z[..., :-1]
+                    real_norm_z = real_norm_z[..., :-1]
+                cond = (en_z, F0_real_z, real_norm_z, s_z, z_length_cut, ~z_cut_mask)  # ~z_cut_mask=True
+                gd_z_4d = convert_3d_to_4d(gt_z, channel=8, converted_z_dim=160)
+                loss_diff_mono_vlb, loss_dict = model.decoder(gd_z_4d, cond)
+                loss_test += accelerator.gather(loss_diff_mono_vlb).mean().item()
                 iters_test += 1
 
         if accelerator.is_main_process:
@@ -440,26 +446,43 @@ def main(config_path):
             generator.remove_weight_norm()
 
             with torch.no_grad():
-                for bib in range(len(asr)):
+                for bib in range(len(asr)): # use validation
                     mel_length = int(mel_input_length[bib].item())
+                    z_length = mel_length // z_rate
                     gt = mels[bib, :, :mel_length].unsqueeze(0)
-                    en = asr[bib, :, :mel_length // 2].unsqueeze(0)
+                    #en = asr[bib, :, :mel_length // 2].unsqueeze(0)
+                    gt_z = z[bib, :, :z_length].unsqueeze(0)
+                    en_z = asr_z[bib, :, :z_length // 2].unsqueeze(0)
+
 
                     F0_real, _, _ = model.pitch_extractor(gt.unsqueeze(1))
                     #F0_real = F0_real.unsqueeze(0)
-                    s = model.style_encoder(gt.unsqueeze(1))
+                    #s = model.style_encoder(gt.unsqueeze(1))
                     real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
 
-                    mel_rec = model.decoder(en, F0_real, real_norm, s)
+                    s_z = model.style_encoder(gt_z.unsqueeze(1))
+                    real_norm_z = F.interpolate(real_norm.unsqueeze(1), size=real_norm.size(-1) // z_rate, mode="linear",
+                                                align_corners=True)
+                    F0_real_z = F.interpolate(F0_real.unsqueeze(1), size=F0_real.size(-1) // z_rate, mode="linear",
+                                              align_corners=True)
+
+                    ## cut pe to equal with en_z
+                    if F0_real_z.size(-1) > en_z.size(-1) * 2:
+                        F0_real_z = F0_real_z[..., :-1]
+                        real_norm_z = real_norm_z[..., :-1]
+                    cond = (en_z, F0_real_z, real_norm_z, s_z, z_length_cut, ~z_cut_mask)  # ~z_cut_mask=True
+
+                    (z_rec, _), cross_attns = model.decoder.sample_log(
+                        cond, batch_size=1, ddim=True, ddim_steps=200, eta=1.0, use_plms=False)  # cfg training?
+                    mel_rec = model.decoder.decode_first_stage(z_rec)
 
                     # add vocoder
                     c = mel_rec.squeeze()
-                    y_g_hat = generator(c.unsqueeze(0))
+                    y_g_hat = generator(c.unsqueeze(0).transpose(1,2))
 
                     writer.add_audio('eval/y' + str(bib), y_g_hat.cpu().numpy().squeeze(), epoch, sample_rate=sr)
                     if epoch == 0:
                         writer.add_audio('gt/y' + str(bib), waves[bib].squeeze(), epoch, sample_rate=sr)
-
                     if bib >= 6:
                         break
 
@@ -488,7 +511,6 @@ def main(config_path):
         }
         save_path = osp.join(log_dir, config.get('first_stage_path', 'first_stage.pth'))
         torch.save(state, save_path)
-
 
 if __name__ == "__main__":
     main()

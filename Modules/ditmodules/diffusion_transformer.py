@@ -6,7 +6,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from drawspeech.utilities.vis import save_plot
+from utilities.vis import save_plot
 import math
 
 

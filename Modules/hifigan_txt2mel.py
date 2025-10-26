@@ -479,7 +479,6 @@ class Decoder(nn.Module):
             x = block(x, s)
             if block.upsample_type != "none":
                 res = False
-
         x = self.to_out(x)
         return x
 

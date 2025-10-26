@@ -75,6 +75,7 @@ class FilePathDataset(torch.utils.data.Dataset):
                  validation=False,
                  OOD_data="Data/OOD_texts.txt",
                  min_length=50,
+                 need_wav_norm=False
                  ):
 
         spect_params = SPECT_PARAMS
@@ -92,7 +93,8 @@ class FilePathDataset(torch.utils.data.Dataset):
         self.mean, self.std = -4, 4
         self.data_augmentation = data_augmentation and (not validation)
         self.max_mel_length = 192
-        
+        self.need_wav_norm = need_wav_norm
+
         self.min_length = min_length
         with open(OOD_data, 'r', encoding='utf-8') as f:
             tl = f.readlines()
@@ -119,15 +121,13 @@ class FilePathDataset(torch.utils.data.Dataset):
         # get reference sample
         ############# TEMP code
         try:
-            ref_data = (self.df[self.df[2] == str(data[2])]).sample(n=1).iloc[0].tolist()
+            ref_data = (self.df[self.df[2] == str(data[2])]).sample(n=1).iloc[0].tolist()  # str(speaker_id) -> str(data[2])
         except:
             print("speaker_id", data, speaker_id)
         ref_mel_tensor, ref_label = self._load_data(ref_data[:3])
         
         # get OOD text
-        
         ps = ""
-        
         while len(ps) < self.min_length:
             rand_idx = np.random.randint(0, len(self.ptexts) - 1)
             ps = self.ptexts[rand_idx]
@@ -135,7 +135,6 @@ class FilePathDataset(torch.utils.data.Dataset):
             text = self.text_cleaner(ps)
             text.insert(0, 0)
             text.append(0)
-
             ref_text = torch.LongTensor(text)
         
         return speaker_id, acoustic_feature, text_tensor, ref_text, ref_mel_tensor, ref_label, path, wave
@@ -150,7 +149,9 @@ class FilePathDataset(torch.utils.data.Dataset):
         #if sr != 24000:
         #    wave = librosa.resample(wave, orig_sr=sr, target_sr=24000)
         #    print(wave_path, sr)
-            
+        if self.need_wav_norm:
+            wave = self.normalize_wav(wave)   # Wav norm is used in drawspeech.
+
         wave = np.concatenate([np.zeros([5000]), wave, np.zeros([5000])], axis=0)
         
         text = self.text_cleaner(text)
@@ -161,6 +162,11 @@ class FilePathDataset(torch.utils.data.Dataset):
         text = torch.LongTensor(text)
 
         return wave, text, speaker_id
+
+    def normalize_wav(self, waveform):
+        waveform = waveform - np.mean(waveform)
+        waveform = waveform / (np.max(np.abs(waveform)) + 1e-8)
+        return waveform * 0.5  # Manually limit the maximum amplitude into 0.5
 
     def _load_data(self, data):
         wave, text_tensor, speaker_id = self._load_tensor(data)
@@ -245,9 +251,10 @@ def build_dataloader(path_list,
                      num_workers=1,
                      device='cpu',
                      collate_config={},
-                     dataset_config={}):
+                     dataset_config={},
+                     need_wav_norm=False):
     
-    dataset = FilePathDataset(path_list, root_path, OOD_data=OOD_data, min_length=min_length, validation=validation, **dataset_config)
+    dataset = FilePathDataset(path_list, root_path, OOD_data=OOD_data, min_length=min_length, validation=validation, need_wav_norm=need_wav_norm, **dataset_config)
     collate_fn = Collater(**collate_config)
     data_loader = DataLoader(dataset,
                              batch_size=batch_size,

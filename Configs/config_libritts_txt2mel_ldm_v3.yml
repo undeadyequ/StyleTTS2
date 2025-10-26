@@ -1,0 +1,222 @@
+log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_ldm_v3"
+first_stage_path: "first_stage.pth"
+save_freq: 2
+log_interval: 10
+device: "cuda"
+epochs_1st: 50 # number of epochs for first stage training (pre-training)
+epochs_2nd: 30 # number of peochs for second stage training (joint training)
+batch_size: 10
+max_len: 300 # maximum number of frames
+#pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel/epoch_2nd_00016.pth"
+pretrained_model: ""
+second_stage_load_pretrained: false # set to true if the pre-trained model is for 2nd stage
+load_only_params: false # set to true if do not want to load epoch numbers and optimizer parameters
+
+F0_path: "Utils/JDC/bst.t7"
+ASR_config: "Utils/ASR/config.yml"
+ASR_path: "Utils/ASR/epoch_00080.pth"
+PLBERT_dir: 'Utils/PLBERT/'
+
+data_params:
+  train_data: "Data/train_list_libritts_spk.txt"
+  val_data: "Data/val_list_libritts_spk.txt"
+  root_path: ""
+  OOD_data: "Data/OOD_texts.txt"
+  min_length: 50 # sample until texts with this size are obtained for OOD texts
+  need_wav_norm: false
+
+preprocess_params:
+  sr: &sampling_rate 24000
+  spect_params:
+    n_fft: 2048
+    win_length: 1200
+    hop_length: 300
+
+model_params:
+  multispeaker: true
+
+  dim_in: 64 
+  hidden_dim: 512
+  max_conv_dim: 512
+  repeat_num: 2     # HYPE 4 -> 2
+  n_layer: 3
+  n_mels: &mel_bins 80
+
+  n_token: 178 # number of phoneme tokens
+  max_dur: 50 # maximum duration of a single phoneme
+  style_dim: 256 # style vector size   128 -> 256
+  
+  dropout: 0.2
+
+  # speech language model config
+  slm:
+      model: 'microsoft/wavlm-base-plus'
+      sr: 16000 # sampling rate of SLM
+      hidden: 768 # hidden size of SLM
+      nlayers: 13 # number of layers of SLM
+      initial_channel: 64 # initial channels of SLM discriminator head
+  
+  # style diffusion model config
+  diffusion:
+    embedding_mask_proba: 0.1
+    # transformer config
+    transformer:
+      num_layers: 3
+      num_heads: 8
+      head_features: 64
+      multiplier: 2
+
+    # diffusion distribution config
+    dist:
+      sigma_data: 0.2 # placeholder for estimate_sigma_data set to false
+      estimate_sigma_data: true # estimate sigma_data from the current batch if set to true
+      mean: -3.0
+      std: 1.0
+
+loss_params:
+    lambda_mel: 5. # mel reconstruction loss (1st & 2nd stage)
+    lambda_adv: 1. # adversarial loss (1st & 2nd stage)
+    lambda_reg: 1. # adversarial regularization loss (1st & 2nd stage)
+    lambda_fm: 0.1 # feature matching loss (1st & 2nd stage)
+    
+    lambda_mono: 1. # monotonic alignment loss (1st stage, TMA)
+    lambda_s2s: 1. # sequence-to-sequence loss (1st stage, TMA)
+    TMA_epoch: 5 # TMA starting epoch (1st stage)
+
+    lambda_F0: 1. # F0 reconstruction loss (2nd stage)
+    lambda_norm: 1. # norm reconstruction loss (2nd stage)
+    lambda_dur: 1. # duration loss (2nd stage)
+    lambda_ce: 20. # duration predictor probability output CE loss (2nd stage)
+    lambda_sty: 1. # style reconstruction loss (2nd stage)
+    lambda_diff: 1. # score matching loss (2nd stage)
+    
+    diff_epoch: 10 # style diffusion starting epoch (2nd stage)
+    joint_epoch: 15 # joint training starting epoch (2nd stage)
+
+optimizer_params:
+  lr: 0.0001 # general learning rate
+  bert_lr: 0.00001 # learning rate for PLBERT
+  ft_lr: 0.00001 # learning rate for acoustic modules
+  
+slmadv_params:
+  min_len: 400 # minimum length of samples
+  max_len: 500 # maximum length of samples
+  batch_percentage: 0.5 # to prevent out of memory, only use half of the original batch size
+  iter: 20 # update the discriminator every this iterations of generator update
+  thresh: 5 # gradient norm above which the gradient is scaled
+  scale: 0.01 # gradient scaling factor for predictors from SLM discriminators
+  sig: 1.5 # sigma for differentiable duration modeling
+
+ldm:
+  first_stage_config:
+    base_learning_rate: 8.0e-06
+    target: Modules.latent_encoder.autoencoder.AutoencoderKL
+    params:
+      reload_from_ckpt: "/home/rosen/Project/DrawSpeech_PyTorch/log/latent_diffusion/config/vae_libritts460_24k_hop300_v3/checkpoints/checkpoint-455999.ckpt"
+      sampling_rate: *sampling_rate
+      batchsize: 12
+      monitor: val/rec_loss   # actually we use global_step
+      image_key: fbank
+      subband: 1
+      embed_dim: &latent_embed_dim 8
+      time_shuffle: 1
+      lossconfig:
+        target: losses.LPIPSWithDiscriminator
+        params:
+          disc_start: 50001
+          kl_weight: 1000.0
+          disc_weight: 0.5
+          disc_in_channels: 1
+      ddconfig:
+        double_z: true
+        mel_bins: *mel_bins # The frequency bins of mel spectrogram
+        z_channels: 8
+        resolution: &latent_t_size 217
+        downsample_time: false
+        in_channels: 1
+        out_ch: 1
+        ch: 128
+        ch_mult:
+          - 1
+          - 2
+          - 4
+        num_res_blocks: 2
+        attn_resolutions: [ ]
+        dropout: 0.0
+
+  # Other parameters
+  base_learning_rate: 1.0e-4
+  warmup_steps: &warmup_steps 2000
+  optimize_ddpm_parameter: &optimize_ddpm_parameter true
+  sampling_rate: *sampling_rate
+  batchsize: 56
+  linear_start: 0.0015
+  linear_end: 0.0195
+  num_timesteps_cond: 1
+  log_every_t: 200
+  timesteps: 1000
+  unconditional_prob_cfg: 0.1
+  parameterization: eps # [eps, x0, v]
+  first_stage_key: fbank
+  latent_t_size: *latent_t_size # TODO might need to change
+  latent_f_size: &latent_f_size 20
+  channels: *latent_embed_dim # TODO might need to change
+  monitor: train/loss
+  scale_by_std: true
+  use_tts_data_for_training: true   # useless, might need to delete this argument
+  learn_monoAttn: True
+
+  unet_config:
+    target: Modules.ditmodules.estimator.Decoder
+    params:
+      noise_channels: 160
+      cond_channels: 160
+      hidden_channels: 256       # normal hidden
+      out_channels: 160
+      filter_channels: 1024      # hidden for conv1d (hid -> filter -> ... -> hid)
+      dropout: 0.1
+      n_layers: 6
+      n_heads: 4
+      kernel_size: 3
+      gin_channels: 256           # global/seq style size
+      use_lsc: true
+      cross_attn: true           # Hyper!!! psuedo
+      crossCond_channels: 256
+
+  cond_stage_config:
+    concat_text_encoder_with_varianceadaptor:
+      cond_stage_key: [ phoneme_idx, pitch, pitch_length, energy, energy_length, pitch_sketch, energy_sketch, phoneme_duration, mel_mask ]
+      conditioning_key: concat
+      target: conditional_models_noconcate.TextEncoderwithVarianceAdaptorNoConcate
+      params:
+        vocabs_size: 360
+        pad_token_id: 0
+        pad_length: &phoneme_pad_length 135
+        output_size: &phoneme_emb_dim 256
+        latent_t_size: *latent_t_size
+        latent_f_size: *latent_f_size
+        adaptor_params:
+          phoneme_embedding_dim: *phoneme_emb_dim
+          pitch_embedding_dim: *phoneme_emb_dim
+          energy_embedding_dim: *phoneme_emb_dim
+          pitch_quantization: linear
+          energy_quantization: linear
+          n_bins: 256
+          stats_json: &stats_json "/home/rosen/data/LibriTTS/drawspeech/phoneme_level_train_460/stats.json"
+          pitch_feature_level: &feature_level phoneme_level
+          energy_feature_level: *feature_level
+        predict_detailed_curve: false
+        prob_drop_pitch: 0.2
+        prob_drop_energy: 0.2
+        predictor_params:
+          pitch_embedding_dim: *phoneme_emb_dim
+          energy_embedding_dim: *phoneme_emb_dim
+          ffn_dim: 512
+          n_bins: 256
+          n_heads: 2
+          n_layers: 2
+
+  evaluation_params:
+    unconditional_guidance_scale: 3.5
+    ddim_sampling_steps: 200
+    n_candidates_per_samples: 1

@@ -1,0 +1,170 @@
+# USE dataset_root_libritts16k_cutdur meta datset, data/preprocessed_data are Libritts + ESD for finetuning pitch/energy over two dataset ( compared with drawspeech_librittsesd_dit_16k_cutdur_phase1.yaml)
+metadata_root: "./data/dataset/metadata/dataset_root_librittsesd16k_cutdur.json"  # meta
+log_directory: "/hdd/drawspeech/log/latent_diffusion"
+project: "drawspeech"
+precision: "high"
+
+variables:
+  sampling_rate: &sampling_rate 16000
+  mel_bins: &mel_bins 80
+  latent_embed_dim: &latent_embed_dim 8  # the output channel of diffusion model
+  latent_t_size: &latent_t_size 216      # pre-defined length
+  latent_f_size: &latent_f_size 20
+  optimize_ddpm_parameter: &optimize_ddpm_parameter true  # Weather use cfg
+  optimize_gpt: &optimize_gpt true
+  warmup_steps: &warmup_steps 2000
+
+data: 
+  train: ["libritts", "esd"] # The dataset key in metadata_root. In joint training, Phase 1 -> ["ljspeech", "esd"], Phase 2(epoch>50) -> esd
+  val: ["libritts"]
+  test: ["libritts"]
+  class_label_indices: null
+  dataloader_add_ons: ["get_preprocessed_meta"]  # read p/e/d from pre-processed dir defined in .json or preprocessed_data
+
+step:
+  # val_check_interval: 200
+  validation_every_n_epochs: 5
+  save_checkpoint_every_n_steps: 1000
+  num_sanity_val_steps: 1
+  limit_val_batches: 2
+  max_steps: 160000  # 80000
+  save_top_k: 3
+  save_last: ture
+
+preprocessing:
+  audio:
+    sampling_rate: *sampling_rate
+    max_wav_value: 32768.0
+    duration: &duration 13.836   # HYPE
+  stft:
+    filter_length: 1024
+    hop_length: 256
+    win_length: 1024
+  mel:
+    n_mel_channels: *mel_bins
+    mel_fmin: 0
+    mel_fmax: 8000
+  phoneme_pad_length: &phoneme_pad_length 135   # HYPE
+  preprocessed_data:
+    energy: ["/hdd/LibriTTS_16k/drawspeech/phoneme_level_renorm/energy", "/hdd/ESD/drawspeech/phoneme_level_renorm/energy"]
+    pitch: ["/hdd/LibriTTS_16k/drawspeech/phoneme_level_renorm/pitch", "/hdd/ESD/drawspeech/phoneme_level_renorm/pitch"]
+    duration: ["/hdd/LibriTTS_16k/drawspeech/phoneme_level_renorm/duration", "/hdd/ESD/drawspeech/phoneme_level_renorm/duration"]
+    stats_json: &stats_json "/hdd/LibriTTS_16k/drawspeech/phoneme_level_renorm/union_libritts16k_esd_stats.json"
+    feature: &feature_level phoneme_level
+
+model:
+  target: drawspeech.modules.latent_diffusion.ddpm_dit.LatentDiffusion
+  params: 
+    # Autoencoder
+    first_stage_config:
+      base_learning_rate: 8.0e-06
+      target: drawspeech.modules.latent_encoder.autoencoder.AutoencoderKL
+      params: 
+        reload_from_ckpt: "log/latent_diffusion/config/vae_librittsesd16k_cutdur/checkpoints/checkpoint-239999.ckpt"
+        sampling_rate: *sampling_rate
+        batchsize: 4
+        monitor: val/rec_loss   # actually we use global_step
+        image_key: fbank
+        subband: 1
+        embed_dim: *latent_embed_dim
+        time_shuffle: 1
+        lossconfig:
+          target: drawspeech.losses.LPIPSWithDiscriminator
+          params:
+            disc_start: 50001
+            kl_weight: 1000.0
+            disc_weight: 0.5
+            disc_in_channels: 1
+        ddconfig: 
+          double_z: true
+          mel_bins: *mel_bins # The frequency bins of mel spectrogram
+          z_channels: 8
+          resolution: *latent_t_size
+          downsample_time: false
+          in_channels: 1
+          out_ch: 1
+          ch: 128 
+          ch_mult:
+          - 1
+          - 2
+          - 4
+          num_res_blocks: 2
+          attn_resolutions: []
+          dropout: 0.0
+    
+    # Other parameters
+    base_learning_rate: 1.0e-4
+    warmup_steps: *warmup_steps
+    optimize_ddpm_parameter: *optimize_ddpm_parameter
+    sampling_rate: *sampling_rate
+    batchsize: 32
+    linear_start: 0.0015
+    linear_end: 0.0195
+    num_timesteps_cond: 1
+    log_every_t: 200
+    timesteps: 1000
+    unconditional_prob_cfg: 0.1
+    parameterization: eps # [eps, x0, v]
+    first_stage_key: fbank
+    latent_t_size: *latent_t_size # TODO might need to change
+    latent_f_size: *latent_f_size
+    channels: *latent_embed_dim # TODO might need to change
+    monitor: train/loss
+    scale_by_std: true
+    use_tts_data_for_training: true   # useless, might need to delete this argument
+    learn_monoAttn: False
+
+    unet_config:
+      target: drawspeech.modules.ditmodules.estimator.Decoder
+      params:
+        noise_channels: 160
+        cond_channels: 160
+        hidden_channels: 256       # normal hidden
+        out_channels: 160
+        filter_channels: 1024      # hidden for conv1d (hid -> filter -> ... -> hid)
+        dropout: 0.1
+        n_layers: 6
+        n_heads: 4
+        kernel_size: 3
+        gin_channels: 256           # global/seq style size
+        use_lsc: true
+        cross_attn: true           # Hyper!!! psuedo
+        crossCond_channels: 256
+    
+    cond_stage_config:
+      concat_text_encoder_with_varianceadaptor:
+        cond_stage_key: [phoneme_idx, pitch, pitch_length, energy, energy_length, pitch_sketch, energy_sketch, phoneme_duration, mel_mask]
+        conditioning_key: concat
+        target: drawspeech.conditional_models_noconcate.TextEncoderwithVarianceAdaptorNoConcate
+        params:
+          vocabs_size: 360
+          pad_token_id: 0
+          pad_length: *phoneme_pad_length
+          output_size: &phoneme_emb_dim 256
+          latent_t_size: *latent_t_size
+          latent_f_size: *latent_f_size
+          adaptor_params:
+            phoneme_embedding_dim: *phoneme_emb_dim
+            pitch_embedding_dim: *phoneme_emb_dim
+            energy_embedding_dim: *phoneme_emb_dim
+            pitch_quantization: linear
+            energy_quantization: linear
+            n_bins: 256
+            stats_json: *stats_json
+            pitch_feature_level: *feature_level
+            energy_feature_level: *feature_level
+          predict_detailed_curve: false
+          prob_drop_pitch: 0.2
+          prob_drop_energy: 0.2
+          predictor_params:
+            pitch_embedding_dim: *phoneme_emb_dim
+            energy_embedding_dim: *phoneme_emb_dim
+            ffn_dim: 512
+            n_bins: 256
+            n_heads: 2
+            n_layers: 2
+    
+    evaluation_params:
+      unconditional_guidance_scale: 3.5
+      ddim_sampling_steps: 200
+      n_candidates_per_samples: 1

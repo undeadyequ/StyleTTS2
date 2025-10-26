@@ -22,6 +22,8 @@ from Modules.diffusion.diffusion import AudioDiffusionConditional
 from munch import Munch
 import yaml
 
+from Modules.latent_diffusion.ddpm_dit import LatentDiffusion
+
 
 class LearnedDownSample(nn.Module):
     def __init__(self, layer_type, dim_in):
@@ -146,12 +148,11 @@ class ResBlk(nn.Module):
 
 
 class StyleEncoder(nn.Module):
-    def __init__(self, dim_in=48, style_dim=48, max_conv_dim=384):
+    def __init__(self, dim_in=48, style_dim=48, max_conv_dim=384, repeat_num = 2):
         super().__init__()
         blocks = []
         blocks += [spectral_norm(nn.Conv2d(1, dim_in, 3, 1, 1))]
 
-        repeat_num = 4
         for _ in range(repeat_num):
             dim_out = min(dim_in * 2, max_conv_dim)
             blocks += [ResBlk(dim_in, dim_out, downsample='half')]
@@ -629,32 +630,13 @@ def load_ASR_models(ASR_MODEL_PATH, ASR_MODEL_CONFIG):
     return asr_model
 
 
-def build_model(args, text_aligner, pitch_extractor, bert):
-    assert args.decoder.type in ['istftnet', 'hifigan'], 'Decoder type unknown'
-
-    if args.decoder.type == "istftnet":
-        from Modules.istftnet import Decoder
-        decoder = Decoder(dim_in=args.hidden_dim, style_dim=args.style_dim, dim_out=args.n_mels,
-                          resblock_kernel_sizes=args.decoder.resblock_kernel_sizes,
-                          upsample_rates=args.decoder.upsample_rates,
-                          upsample_initial_channel=args.decoder.upsample_initial_channel,
-                          resblock_dilation_sizes=args.decoder.resblock_dilation_sizes,
-                          upsample_kernel_sizes=args.decoder.upsample_kernel_sizes,
-                          gen_istft_n_fft=args.decoder.gen_istft_n_fft,
-                          gen_istft_hop_size=args.decoder.gen_istft_hop_size)
-    elif args.decoder.type == "hifigan":
-        from Modules.hifigan_txt2mel import Decoder
-        decoder = Decoder(dim_in=args.hidden_dim, style_dim=args.style_dim, residual_dim=64, dim_out=args.n_mels)
-    elif args.decoder.type == "mdit_ldm":
-        from Modules.ditmodules.estimator import Decoder
-        decoder = Decoder(args.dit)
-
-    first_model = AutoEncoderKL(args.autoEncoderKL)
+def build_model(args, args_ldm, text_aligner, pitch_extractor, bert):
+    decoder = LatentDiffusion(**args_ldm)
     text_encoder = TextEncoder(channels=args.hidden_dim, kernel_size=5, depth=args.n_layer, n_symbols=args.n_token)
     predictor = ProsodyPredictor(style_dim=args.style_dim, d_hid=args.hidden_dim, nlayers=args.n_layer,
                                  max_dur=args.max_dur, dropout=args.dropout)
     style_encoder = StyleEncoder(dim_in=args.dim_in, style_dim=args.style_dim,
-                                 max_conv_dim=args.hidden_dim)  # acoustic style encoder
+                                 max_conv_dim=args.hidden_dim, repeat_num=args.repeat_num)  # acoustic style encoder
     predictor_encoder = StyleEncoder(dim_in=args.dim_in, style_dim=args.style_dim,
                                      max_conv_dim=args.hidden_dim)  # prosodic style encoder
     # define diffusion model
@@ -667,7 +649,6 @@ def build_model(args, text_aligner, pitch_extractor, bert):
         transformer = Transformer1d(channels=args.style_dim * 2,
                                     context_embedding_features=bert.config.hidden_size,
                                     **args.diffusion.transformer)
-
     diffusion = AudioDiffusionConditional(
         in_channels=1,
         embedding_max_length=bert.config.max_position_embeddings,
@@ -676,7 +657,6 @@ def build_model(args, text_aligner, pitch_extractor, bert):
         channels=args.style_dim * 2,
         context_features=args.style_dim * 2,
     )
-
     diffusion.diffusion = KDiffusion(
         net=diffusion.unet,
         sigma_distribution=LogNormalDistribution(mean=args.diffusion.dist.mean, std=args.diffusion.dist.std),
@@ -695,7 +675,6 @@ def build_model(args, text_aligner, pitch_extractor, bert):
 
         predictor=predictor,
         decoder=decoder,
-        first_model=first_model,
         text_encoder=text_encoder,
 
         predictor_encoder=predictor_encoder,

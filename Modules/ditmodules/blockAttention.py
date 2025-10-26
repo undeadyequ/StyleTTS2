@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from drawspeech.utilities.vis import save_plot
+from utilities.vis import save_plot
 import math
-from drawspeech.modules.ditmodules.positionEmbedder import PhoneRotaryPositionalEmbeddings, RotaryPositionalEmbeddings
-from drawspeech.modules.ditmodules.guide_mask import make_guided_attention_masks
+from Modules.ditmodules.positionEmbedder import PhoneRotaryPositionalEmbeddings, RotaryPositionalEmbeddings
+from Modules.ditmodules.guide_mask import make_guided_attention_masks
 
 
 class MultiHeadAttentionCross(nn.Module):
