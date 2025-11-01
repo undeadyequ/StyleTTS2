@@ -1,14 +1,5 @@
 # load packages
-import random
-import yaml
 import time
-from munch import Munch
-import numpy as np
-import torch
-from torch import nn
-import torch.nn.functional as F
-import torchaudio
-import librosa
 import click
 import shutil
 import traceback
@@ -18,20 +9,13 @@ warnings.simplefilter('ignore')
 from torch.utils.tensorboard import SummaryWriter
 
 from meldataset import build_dataloader
-
-from Utils.ASR.models import ASRCNN
-from Utils.JDC.model import JDCNet
 from Utils.PLBERT.util import load_plbert
 
-from models_txt2mel import *
+from models_txt2mel_cfm import *
 from losses import *
 from utils import *
-
-from Modules.slmadv import SLMAdversarialLoss
 from Modules.diffusion.sampler import DiffusionSampler, ADPM2Sampler, KarrasSchedule
-
 from optimizers import build_optimizer
-
 from attrdict import AttrDict
 from Modules.hifi_gan.vocoder import Generator
 import glob
@@ -56,9 +40,8 @@ handler = StreamHandler()
 handler.setLevel(logging.DEBUG)
 logger.addHandler(handler)
 
-
 @click.command()
-@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel.yml', type=str)
+@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm_v4.yml', type=str)
 def main(config_path):
     config = yaml.safe_load(open(config_path))
 
@@ -134,16 +117,12 @@ def main(config_path):
     # build model
     model_params = recursive_munch(config['model_params'])
     multispeaker = model_params.multispeaker
-    model = build_model(model_params, text_aligner, pitch_extractor, plbert)
+    model = build_model(model_params, config['cfm_config'], text_aligner, pitch_extractor, plbert)
+    style_dim = model_params.style_dim
+
     _ = [model[key].to(device) for key in model]
 
-    # DP -> THIS CODE CAUSED problem, -> style_encoder parameter disapeared ??? I donot kown why???
-    #for key in model:
-    #    model[key] = MyDataParallel(model[key])
-
     start_epoch = 0
-    iters = 0
-
     load_pretrained = config.get('pretrained_model', '') != '' and config.get('second_stage_load_pretrained', False)
 
     # load first
@@ -172,7 +151,6 @@ def main(config_path):
         sigma_schedule=KarrasSchedule(sigma_min=0.0001, sigma_max=3.0, rho=9.0),  # empirical parameters
         clamp=False
     )
-
     scheduler_params = {
         "max_lr": optimizer_params.lr,
         "pct_start": float(0),
@@ -211,20 +189,14 @@ def main(config_path):
     n_down = model.text_aligner.n_down
 
     best_loss = float('inf')  # best test loss
-    loss_train_record = list([])
-    loss_test_record = list([])
     iters = 0
 
     criterion = nn.L1Loss()  # F0 loss (regression)
     torch.cuda.empty_cache()
-
-    stft_loss = MultiResolutionSTFTLoss().to(device)
-
     print('BERT', optimizer.optimizers['bert'])
     print('decoder', optimizer.optimizers['decoder'])
 
     start_ds = False
-
     running_std = []
 
     for epoch in range(start_epoch, epochs):
@@ -249,7 +221,6 @@ def main(config_path):
                 mask = length_to_mask(mel_input_length // (2 ** n_down)).to(device)
                 mel_mask = length_to_mask(mel_input_length).to(device)
                 text_mask = length_to_mask(input_lengths).to(texts.device)
-
                 try:
                     _, _, s2s_attn = model.text_aligner(mels, mask, texts)
                     s2s_attn = s2s_attn.transpose(-1, -2)
@@ -316,18 +287,14 @@ def main(config_path):
                                       embedding_scale=1,
                                       embedding_mask_proba=0.1,
                                       num_steps=num_steps).squeeze(1)
-                    loss_diff = model.diffusion.diffusion(s_trg.unsqueeze(1),
-                                                                 embedding=bert_dur).mean()  # EDM loss
+                    loss_diff = model.diffusion.diffusion(s_trg.unsqueeze(1), embedding=bert_dur).mean()  # EDM loss
                     loss_sty = F.l1_loss(s_preds, s_trg.detach())  # style reconstruction loss
             else:
                 loss_sty = 0
                 loss_diff = 0
 
             # dur, pitch predictor
-            d, p = model.predictor(d_en, s_dur,
-                                   input_lengths,
-                                   s2s_attn_mono,
-                                   text_mask)
+            d, p = model.predictor(d_en, s_dur, input_lengths, s2s_attn_mono, text_mask)
             mel_len = min(int(mel_input_length.min().item() / 2 - 1), max_len // 2)
             mel_len_st = int(mel_input_length.min().item() / 2 - 1)
             en = []
@@ -336,7 +303,7 @@ def main(config_path):
             p_en = []
             wav = []
 
-            # gt,st, p_en (pitch encoding), en (asr)
+            # gt,st, p_en, en (asr)  ???? WHY not use mels, and ref_mels -> Train styleDiffuser use all mel, train decoder use part
             for bib in range(len(mel_input_length)):
                 mel_length = int(mel_input_length[bib].item() / 2)
 
@@ -352,7 +319,11 @@ def main(config_path):
                 random_start = np.random.randint(0, mel_length - mel_len_st)
                 st.append(mels[bib, :, (random_start * 2):((random_start + mel_len_st) * 2)])
 
-            wav = torch.stack(wav).float().detach()
+            # mask
+            with torch.no_grad():  # get
+                mel_length_cut = torch.where(mel_input_length < mel_len * 2, mel_input_length, torch.tensor(mel_len * 2))
+                mel_cut_mask = length_to_mask(mel_length_cut).to('cuda')
+
             en = torch.stack(en)
             p_en = torch.stack(p_en)
             gt = torch.stack(gt).detach()
@@ -368,60 +339,19 @@ def main(config_path):
             # gd and pred of p/e, y_rec (or y_rec_gt_pred depend on epoch)
             with torch.no_grad():
                 F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1))
-                F0 = F0.reshape(F0.shape[0], F0.shape[1] * 2, F0.shape[2], 1).squeeze()
-
-                asr_real = model.text_aligner.get_feature(gt)
                 N_real = log_norm(gt.unsqueeze(1)).squeeze(1)
-
-                mel_rec_gt = gt.unsqueeze(1)
-                mel_rec_gt_pred = model.decoder(en, F0_real, N_real, s)
-
-                if epoch >= joint_epoch:
-                    # ground truth from recording
-                    mel = mel_rec_gt  # use recording since decoder is tuned
-                else:
-                    # ground truth from reconstruction
-                    mel = mel_rec_gt_pred  # use reconstruction since decoder is fixed
-
             F0_fake, N_fake = model.predictor.F0Ntrain(p_en, s_dur)
-            mel_rec = model.decoder(en, F0_fake, N_fake, s)
 
             # loss p/e
             loss_F0_rec = (F.smooth_l1_loss(F0_real, F0_fake)) / 10
             loss_norm_rec = F.smooth_l1_loss(N_real, N_fake)
 
-            # discriminator loss
-            if start_ds:
-                optimizer.zero_grad()
-                gt.requires_grad_()
-                out, _ = model.discriminator(gt.unsqueeze(1))
-                loss_real = adv_loss(out, 1)
-                loss_reg = r1_reg(out, gt)
-                out, _ = model.discriminator(mel_rec.detach().unsqueeze(1))
-                loss_fake = adv_loss(out, 0)
-                d_loss = loss_real + loss_fake + loss_reg
-                d_loss.backward()
-                optimizer.step('discriminator')
-            else:
-                d_loss = 0
-
-            # generator loss
+            # CFM loss (after pe, diff training)
             optimizer.zero_grad()
-            loss_mel = criterion(mel_rec.squeeze(), gt.detach())
+            pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
+            loss_cfm, attn_maps = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s, seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1))
 
-            loss_fm = 0
-            if start_ds:
-                out_rec, f_fake = model.discriminator(mel_rec.unsqueeze(1))
-                loss_adv = adv_loss(out_rec, 1)
-                # feature map loss
-                with torch.no_grad():
-                    _, f_real = model.discriminator(gt.unsqueeze(1))
-                for m in range(len(f_real)):
-                    for k in range(len(f_real[m])):
-                        loss_fm += torch.mean(torch.abs(f_real[m][k] - f_fake[m][k]))
-            else:
-                loss_adv = 0
-
+            # dur ce loss
             loss_ce = 0
             loss_dur = 0
             for _s2s_pred, _text_input, _text_length in zip(d, (d_gt), input_lengths):
@@ -435,21 +365,17 @@ def main(config_path):
                 loss_dur += F.l1_loss(_dur_pred[1:_text_length - 1],
                                       _text_input[1:_text_length - 1])
                 loss_ce += F.binary_cross_entropy_with_logits(_s2s_pred.flatten(), _s2s_trg.flatten())
-
             loss_ce /= texts.size(0)
             loss_dur /= texts.size(0)
 
-            g_loss = loss_params.lambda_mel * loss_mel + \
+            g_loss = loss_params.lambda_mel * loss_cfm + \
                      loss_params.lambda_F0 * loss_F0_rec + \
                      loss_params.lambda_ce * loss_ce + \
                      loss_params.lambda_norm * loss_norm_rec + \
                      loss_params.lambda_dur * loss_dur + \
-                     loss_params.lambda_adv * loss_adv + \
-                     loss_params.lambda_fm * loss_fm + \
                      loss_params.lambda_sty * loss_sty + \
                      loss_params.lambda_diff * loss_diff
-
-            running_loss += loss_mel.item()
+            running_loss += loss_cfm
             g_loss.backward()
             if torch.isnan(g_loss):
                 pass
@@ -464,22 +390,11 @@ def main(config_path):
             if epoch >= diff_epoch:
                 optimizer.step('diffusion')
 
-            if epoch >= joint_epoch:
+            if epoch >= joint_epoch:  #(joint_epoch > diff_epoch)
                 optimizer.step('style_encoder')
                 optimizer.step('decoder')
 
-                # randomly pick whether to use in-distribution text
-                if np.random.rand() < 0.5:
-                    use_ind = True
-                else:
-                    use_ind = False
-
-                if use_ind:
-                    ref_lengths = input_lengths
-                    ref_texts = texts
-
-                #d_loss_slm, loss_gen_lm, y_pred = slm_out
-
+                """
                 # compute the gradient norm
                 total_norm = {}
                 for key in model.keys():
@@ -489,26 +404,22 @@ def main(config_path):
                         param_norm = p.grad.detach().data.norm(2)
                         total_norm[key] += param_norm.item() ** 2
                     total_norm[key] = total_norm[key] ** 0.5
-
                 # gradient scaling
                 optimizer.step('bert_encoder')
                 optimizer.step('bert')
                 optimizer.step('predictor')
                 optimizer.step('diffusion')
+                """
 
             iters = iters + 1
 
             if (i + 1) % log_interval == 0:
                 logger.info(
-                    'Epoch [%d/%d], Step [%d/%d], Loss: %.5f, Disc Loss: %.5f, Dur Loss: %.5f, CE Loss: %.5f, Norm Loss: %.5f, F0 Loss: %.5f, adv Loss: %.5f, fm Loss: %.5f, Sty Loss: %.5f, Diff Loss: %.5f'
-                    % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, running_loss / log_interval, d_loss,
-                       loss_dur, loss_ce, loss_norm_rec, loss_F0_rec, loss_adv, loss_fm, loss_sty, loss_diff
-                       ))
+                    'Epoch [%d/%d], Step [%d/%d], Loss: %.5f, cfm Loss: %.5f, Dur Loss: %.5f, CE Loss: %.5f, Norm Loss: %.5f, F0 Loss: %.5f, Sty Loss: %.5f, Diff Loss: %.5f'
+                    % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, running_loss / log_interval, loss_cfm,
+                       loss_dur, loss_ce, loss_norm_rec, loss_F0_rec, loss_sty, loss_diff))
 
-                writer.add_scalar('train/mel_loss', running_loss / log_interval, iters)
-                writer.add_scalar('train/adv_loss', loss_adv, iters)
-                writer.add_scalar('train/fm_loss', loss_fm, iters)
-                writer.add_scalar('train/d_loss', d_loss, iters)
+                writer.add_scalar('train/cfm_loss', running_loss / log_interval, iters)
                 writer.add_scalar('train/ce_loss', loss_ce, iters)
                 writer.add_scalar('train/dur_loss', loss_dur, iters)
                 writer.add_scalar('train/norm_loss', loss_norm_rec, iters)
@@ -516,7 +427,6 @@ def main(config_path):
                 writer.add_scalar('train/sty_loss', loss_sty, iters)
                 writer.add_scalar('train/diff_loss', loss_diff, iters)
                 running_loss = 0
-
                 print('Time elasped:', time.time() - start_time)
 
         loss_test = 0
@@ -528,7 +438,6 @@ def main(config_path):
             iters_test = 0
             for batch_idx, batch in enumerate(val_dataloader):
                 optimizer.zero_grad()
-
                 try:
                     waves = batch[0]
                     batch = [b.to(device) for b in batch[1:]]
@@ -548,11 +457,16 @@ def main(config_path):
                         # encode
                         t_en = model.text_encoder(texts, input_lengths, text_mask)
                         asr = (t_en @ s2s_attn_mono)
-
                         d_gt = s2s_attn_mono.sum(axis=-1).detach()
 
                     ss = []
                     gs = []
+
+                    # mask
+                    with torch.no_grad():  # get
+                        mel_length_cut = torch.where(mel_input_length < mel_len * 2, mel_input_length,
+                                                     torch.tensor(mel_len * 2))
+                        mel_cut_mask = length_to_mask(mel_length_cut).to('cuda')
 
                     for bib in range(len(mel_input_length)):
                         mel_length = int(mel_input_length[bib].item())
@@ -592,13 +506,11 @@ def main(config_path):
                         wav.append(torch.from_numpy(y).to(device))
 
                     wav = torch.stack(wav).float().detach()
-
                     en = torch.stack(en)
                     p_en = torch.stack(p_en)
                     gt = torch.stack(gt).detach()
 
                     s = model.predictor_encoder(gt.unsqueeze(1))
-
                     F0_fake, N_fake = model.predictor.F0Ntrain(p_en, s)
 
                     loss_dur = 0
@@ -616,14 +528,14 @@ def main(config_path):
 
                     s = model.style_encoder(gt.unsqueeze(1))
 
-                    mel_rec = model.decoder(en, F0_fake, N_fake, s)
-                    loss_mel = criterion(mel_rec.squeeze(), gt.detach())
-
+                    pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
+                    loss_cfm, attn_maps = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s,
+                                                                     seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1))
                     F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1))
 
                     loss_F0 = F.l1_loss(F0_real, F0_fake) / 10
 
-                    loss_test += (loss_mel).mean()
+                    loss_test += (loss_cfm).mean()
                     loss_align += (loss_dur).mean()
                     loss_f += (loss_F0).mean()
 
@@ -656,7 +568,8 @@ def main(config_path):
                     s = model.style_encoder(gt.unsqueeze(1))
                     real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
 
-                    mel_rec = model.decoder(en, F0_real, real_norm, s)
+                    pe = torch.cat([real_norm.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+                    mel_rec, _ = model.decoder(mu=en, mask=mask, n_timesteps=200, temperature=1.0, c=s, seq_style=pe, p_mask=mask)
 
                     # add vocoder
                     c = mel_rec.squeeze()
@@ -668,8 +581,8 @@ def main(config_path):
                     p_en = p[bib, :, :mel_length // 2].unsqueeze(0)
 
                     F0_fake, N_fake = model.predictor.F0Ntrain(p_en, s_dur)
-
-                    mel_pred = model.decoder(en, F0_fake, N_fake, s)
+                    pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
+                    mel_pred, _ = model.decoder(mu=en, mask=mask, n_timesteps=200, temperature=1.0, c=s, seq_style=pe, p_mask=mask)
 
                     # add vocoder
                     c_pred = mel_pred.squeeze()
@@ -693,20 +606,19 @@ def main(config_path):
 
                 for bib in range(len(d_en)):
                     if multispeaker:
-                        s_pred = sampler(noise=torch.randn((1, 256)).unsqueeze(1).to(texts.device),
+                        s_pred = sampler(noise=torch.randn((1, style_dim * 2)).unsqueeze(1).to(texts.device),
                                          embedding=bert_dur[bib].unsqueeze(0),
                                          embedding_scale=1,
                                          features=ref_s[bib].unsqueeze(0),
                                          # reference from the same speaker as the embedding
                                          num_steps=5).squeeze(1)
                     else:
-                        s_pred = sampler(noise=torch.randn((1, 256)).unsqueeze(1).to(texts.device),
+                        s_pred = sampler(noise=torch.randn((1, style_dim * 2)).unsqueeze(1).to(texts.device),
                                          embedding=bert_dur[bib].unsqueeze(0),
                                          embedding_scale=1,
                                          num_steps=5).squeeze(1)
-
-                    s = s_pred[:, 128:]
-                    ref = s_pred[:, :128]
+                    ref = s_pred[:, :style_dim]
+                    s = s_pred[:, style_dim:]
 
                     d = model.predictor.text_encoder(d_en[bib, :, :input_lengths[bib]].unsqueeze(0),
                                                      s, input_lengths[bib, ...].unsqueeze(0),
@@ -729,9 +641,10 @@ def main(config_path):
                     # encode prosody
                     en = (d.transpose(-1, -2) @ pred_aln_trg.unsqueeze(0).to(texts.device))
                     F0_pred, N_pred = model.predictor.F0Ntrain(en, s)
-                    out = model.decoder(
-                        (t_en[bib, :, :input_lengths[bib]].unsqueeze(0) @ pred_aln_trg.unsqueeze(0).to(texts.device)),
-                        F0_pred, N_pred, ref.squeeze().unsqueeze(0))
+
+                    pe = torch.cat([N_pred.unsqueeze(1), F0_pred.unsqueeze(1)], dim=1)
+                    out, _ = model.decoder(mu=t_en[bib, :, :input_lengths[bib]].unsqueeze(0) @ pred_aln_trg.unsqueeze(0).to(texts.device),
+                                           mask=mask, n_timesteps=200, temperature=1.0, c=ref, seq_style=pe, p_mask=mask)
 
                     # add vocoder
                     out = out.squeeze()
@@ -795,7 +708,6 @@ def get_vocoder(ckpt_dir="/home/rosen/ckpt/styletts/Vocoder/LibriTTS/", device=N
     generator.eval()
     generator.remove_weight_norm()
     return generator
-
 
 if __name__ == "__main__":
     main()

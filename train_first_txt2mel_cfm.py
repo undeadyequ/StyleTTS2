@@ -55,7 +55,7 @@ logger = get_logger(__name__, log_level="DEBUG")
 
 
 @click.command()
-@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm.yml', type=str)
+@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm_v4.yml', type=str)
 def main(config_path):
     config = yaml.safe_load(open(config_path))
 
@@ -183,8 +183,6 @@ def main(config_path):
     for epoch in range(start_epoch, epochs):
         running_loss = 0
         start_time = time.time()
-        criterion = nn.L1Loss()
-
 
         _ = [model[key].train() for key in model]
 
@@ -197,7 +195,6 @@ def main(config_path):
                 mel_mask = length_to_mask(mel_input_length).to('cuda')
                 mask = length_to_mask(mel_input_length // (2 ** n_down)).to('cuda')
                 text_mask = length_to_mask(input_lengths).to(texts.device)
-
 
             ppgs, s2s_pred, s2s_attn = model.text_aligner(mels, mask, texts)
 
@@ -276,7 +273,6 @@ def main(config_path):
 
             # generator loss (L1 part)
             optimizer.zero_grad()
-
             if epoch >= TMA_epoch:  # start TMA training
                 loss_s2s = 0
                 for _s2s_pred, _text_input, _text_length in zip(s2s_pred, texts, input_lengths):
@@ -433,7 +429,7 @@ def main(config_path):
             if epoch % saving_epoch == 0:
                 if (loss_test / iters_test) < best_loss:
                     best_loss = loss_test / iters_test
-                print('Saving..')
+                print('Saving model..')
                 state = {
                     'net': {key: model[key].state_dict() for key in model},
                     'optimizer': optimizer.state_dict(),

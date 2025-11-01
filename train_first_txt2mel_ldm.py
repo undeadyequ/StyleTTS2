@@ -257,7 +257,7 @@ def main(config_path):
                 st.append(mels[bib, :, (random_start * 2) : ((random_start + mel_len_st) * 2)])
                 st_z.append(z[bib, :, (random_start_z * 2) : ((random_start_z + z_len_st) * 2)])
 
-            en, en_z = torch.stack(en), torch.stack(en_z).detach()
+            en, en_z = torch.stack(en), torch.stack(en_z)  # remove detach() on en_z
             gt, gt_z = torch.stack(gt).detach(), torch.stack(gt_z).detach()
             st, st_z = torch.stack(st).detach(), torch.stack(st_z).detach()
 

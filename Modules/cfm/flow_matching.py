@@ -45,7 +45,7 @@ class CFMDecoder(torch.nn.Module):
         )
 
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def forward(self, mu, mask, n_timesteps, temperature=1.0, c=None, seq_style=None, p_mask=None, solver=None, cfg_kwargs=None,
                 q_f_pos=None, k_f_pos=None):
         """Forward diffusion
@@ -75,7 +75,7 @@ class CFMDecoder(torch.nn.Module):
         t_span = torch.linspace(0, 1, n_timesteps + 1, device=mu.device)
 
         mask = torch.ones([z.size(0), 1, z.size(-1)]).to(z.device)
-        p_mask = mask
+        p_mask = torch.ones([seq_style.size(0), 1, seq_style.size(-1)]).to(z.device)
 
         # cfg control
         if cfg_kwargs is None:

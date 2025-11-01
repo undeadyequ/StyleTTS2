@@ -479,7 +479,6 @@ def main(config_path):
                     ref_texts = texts
 
                 #d_loss_slm, loss_gen_lm, y_pred = slm_out
-
                 # compute the gradient norm
                 total_norm = {}
                 for key in model.keys():
@@ -497,7 +496,6 @@ def main(config_path):
                 optimizer.step('diffusion')
 
             iters = iters + 1
-
             if (i + 1) % log_interval == 0:
                 logger.info(
                     'Epoch [%d/%d], Step [%d/%d], Loss: %.5f, Disc Loss: %.5f, Dur Loss: %.5f, CE Loss: %.5f, Norm Loss: %.5f, F0 Loss: %.5f, adv Loss: %.5f, fm Loss: %.5f, Sty Loss: %.5f, Diff Loss: %.5f'

@@ -1,14 +1,14 @@
-log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v2"
+log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_test"
 first_stage_path: "first_stage.pth"
 save_freq: 2
 log_interval: 10
 device: "cuda"
 epochs_1st: 50 # number of epochs for first stage training (pre-training)
 epochs_2nd: 30 # number of peochs for second stage training (joint training)
-batch_size: 16  # 32
+batch_size: 2  # 32
 max_len: 600 # maximum number of frames 600
 #pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm/epoch_2nd_00014.pth"
-pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v2/epoch_2nd_00014.pth"
+pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_test/epoch_2nd_00014.pth"
 second_stage_load_pretrained: true # set to true if the pre-trained model is for 2nd stage
 load_only_params: false # set to true if do not want to load epoch numbers and optimizer parameters
 
@@ -18,8 +18,8 @@ ASR_path: "Utils/ASR/epoch_00080.pth"
 PLBERT_dir: 'Utils/PLBERT/'
 
 data_params:
-  train_data: "Data/train_list_libritts_spk.txt"
-  val_data: "Data/val_list_libritts_spk.txt"
+  train_data: "Data/train_list_libritts_spk_small.txt"
+  val_data: "Data/val_list_libritts_spk_small.txt"
   root_path: ""
   OOD_data: "Data/OOD_texts.txt"
   min_length: 50 # sample until texts with this size are obtained for OOD texts

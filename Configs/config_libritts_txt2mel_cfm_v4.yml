@@ -1,15 +1,17 @@
-log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v2"
+## change style_dim 256 -> 128
+
+log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v4"
 first_stage_path: "first_stage.pth"
 save_freq: 2
 log_interval: 10
 device: "cuda"
 epochs_1st: 50 # number of epochs for first stage training (pre-training)
-epochs_2nd: 30 # number of peochs for second stage training (joint training)
-batch_size: 16  # 32
+epochs_2nd: 50 # number of peochs for second stage training (joint training)
+batch_size: 32  # 1st: 32, 2nd: 16
 max_len: 600 # maximum number of frames 600
 #pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm/epoch_2nd_00014.pth"
-pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v2/epoch_2nd_00014.pth"
-second_stage_load_pretrained: true # set to true if the pre-trained model is for 2nd stage
+pretrained_model: ""
+second_stage_load_pretrained: false # set to true if the pre-trained model is for 2nd stage
 load_only_params: false # set to true if do not want to load epoch numbers and optimizer parameters
 
 F0_path: "Utils/JDC/bst.t7"
@@ -44,7 +46,7 @@ model_params:
 
   n_token: 178 # number of phoneme tokens
   max_dur: 50 # maximum duration of a single phoneme
-  style_dim: 256 # style vector size   128 -> 256
+  style_dim: 128 # style vector size   128 -> 256 -> 128
   dropout: 0.2
 
   decoder:
@@ -118,5 +120,5 @@ cfm_config:
     n_layers: 6
     kernel_size: 3
     p_dropout: 0.1
-    gin_channels: 256
+    gin_channels: 128
     cross_attn: true           # global/seq style size

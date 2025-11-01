@@ -706,5 +706,4 @@ def load_checkpoint(model, optimizer, path, load_only_params=True, ignore_module
     else:
         epoch = 0
         iters = 0
-
     return model, optimizer, epoch, iters
