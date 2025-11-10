@@ -58,7 +58,7 @@ logger.addHandler(handler)
 
 
 @click.command()
-@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel.yml', type=str)
+@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_test.yml', type=str)
 def main(config_path):
     config = yaml.safe_load(open(config_path))
 
@@ -77,6 +77,7 @@ def main(config_path):
 
     epochs = config.get('epochs_2nd', 200)
     save_freq = config.get('save_freq', 2)
+    data_ratio = config.get('data_ratio', 1)
     log_interval = config.get('log_interval', 10)
     saving_epoch = config.get('save_freq', 2)
 
@@ -98,6 +99,8 @@ def main(config_path):
 
     train_list, val_list = get_data_path_list(train_path, val_path)
     device = 'cuda'
+    if data_ratio < 1:
+        train_list = train_list[:int(len(train_list) * data_ratio)] # to save time
 
     train_dataloader = build_dataloader(train_list,
                                         root_path,
@@ -218,7 +221,7 @@ def main(config_path):
     criterion = nn.L1Loss()  # F0 loss (regression)
     torch.cuda.empty_cache()
 
-    stft_loss = MultiResolutionSTFTLoss().to(device)
+    #stft_loss = MultiResolutionSTFTLoss().to(device)
 
     print('BERT', optimizer.optimizers['bert'])
     print('decoder', optimizer.optimizers['decoder'])
@@ -249,7 +252,6 @@ def main(config_path):
                 mask = length_to_mask(mel_input_length // (2 ** n_down)).to(device)
                 mel_mask = length_to_mask(mel_input_length).to(device)
                 text_mask = length_to_mask(input_lengths).to(texts.device)
-
                 try:
                     _, _, s2s_attn = model.text_aligner(mels, mask, texts)
                     s2s_attn = s2s_attn.transpose(-1, -2)
@@ -310,24 +312,23 @@ def main(config_path):
                                       num_steps=num_steps).squeeze(1)
                     loss_diff = model.diffusion(s_trg.unsqueeze(1), embedding=bert_dur, features=ref).mean()  # EDM loss
                     loss_sty = F.l1_loss(s_preds, s_trg.detach())  # style reconstruction loss
+                    #s_trg_norm, s_preds_norm = torch.norm(s_trg), torch.norm(s_preds)
+                    #print("s_trg_norm, s_preds_norm, loss_sty: ", s_trg_norm.item(), s_preds_norm.item(), loss_sty.item())
+
                 else:
                     s_preds = sampler(noise=torch.randn_like(s_trg).unsqueeze(1).to(device),
                                       embedding=bert_dur,
                                       embedding_scale=1,
                                       embedding_mask_proba=0.1,
                                       num_steps=num_steps).squeeze(1)
-                    loss_diff = model.diffusion.diffusion(s_trg.unsqueeze(1),
-                                                                 embedding=bert_dur).mean()  # EDM loss
+                    loss_diff = model.diffusion.diffusion(s_trg.unsqueeze(1), embedding=bert_dur).mean()  # EDM loss
                     loss_sty = F.l1_loss(s_preds, s_trg.detach())  # style reconstruction loss
             else:
                 loss_sty = 0
                 loss_diff = 0
 
             # dur, pitch predictor
-            d, p = model.predictor(d_en, s_dur,
-                                   input_lengths,
-                                   s2s_attn_mono,
-                                   text_mask)
+            d, p = model.predictor(d_en, s_dur, input_lengths, s2s_attn_mono, text_mask)
             mel_len = min(int(mel_input_length.min().item() / 2 - 1), max_len // 2)
             mel_len_st = int(mel_input_length.min().item() / 2 - 1)
             en = []
@@ -500,8 +501,7 @@ def main(config_path):
                 logger.info(
                     'Epoch [%d/%d], Step [%d/%d], Loss: %.5f, Disc Loss: %.5f, Dur Loss: %.5f, CE Loss: %.5f, Norm Loss: %.5f, F0 Loss: %.5f, adv Loss: %.5f, fm Loss: %.5f, Sty Loss: %.5f, Diff Loss: %.5f'
                     % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, running_loss / log_interval, d_loss,
-                       loss_dur, loss_ce, loss_norm_rec, loss_F0_rec, loss_adv, loss_fm, loss_sty, loss_diff
-                       ))
+                       loss_dur, loss_ce, loss_norm_rec, loss_F0_rec, loss_adv, loss_fm, loss_sty, loss_diff))
 
                 writer.add_scalar('train/mel_loss', running_loss / log_interval, iters)
                 writer.add_scalar('train/adv_loss', loss_adv, iters)
@@ -515,6 +515,9 @@ def main(config_path):
                 writer.add_scalar('train/diff_loss', loss_diff, iters)
                 running_loss = 0
 
+                # print grad
+                #log_grad_params(model)
+
                 print('Time elasped:', time.time() - start_time)
 
         loss_test = 0
@@ -526,7 +529,6 @@ def main(config_path):
             iters_test = 0
             for batch_idx, batch in enumerate(val_dataloader):
                 optimizer.zero_grad()
-
                 try:
                     waves = batch[0]
                     batch = [b.to(device) for b in batch[1:]]
@@ -546,7 +548,6 @@ def main(config_path):
                         # encode
                         t_en = model.text_encoder(texts, input_lengths, text_mask)
                         asr = (t_en @ s2s_attn_mono)
-
                         d_gt = s2s_attn_mono.sum(axis=-1).detach()
 
                     ss = []
@@ -596,7 +597,6 @@ def main(config_path):
                     gt = torch.stack(gt).detach()
 
                     s = model.predictor_encoder(gt.unsqueeze(1))
-
                     F0_fake, N_fake = model.predictor.F0Ntrain(p_en, s)
 
                     loss_dur = 0
@@ -618,7 +618,6 @@ def main(config_path):
                     loss_mel = criterion(mel_rec.squeeze(), gt.detach())
 
                     F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1))
-
                     loss_F0 = F.l1_loss(F0_real, F0_fake) / 10
 
                     loss_test += (loss_mel).mean()
@@ -794,6 +793,17 @@ def get_vocoder(ckpt_dir="/home/rosen/ckpt/styletts/Vocoder/LibriTTS/", device=N
     generator.remove_weight_norm()
     return generator
 
+def log_grad_params(model):
+    total_norm = {}
+    for key in model.keys():
+        total_norm[key] = 0
+        parameters = [p for p in model[key].parameters() if p.grad is not None and p.requires_grad]
+        for p in parameters:
+            param_norm = p.grad.detach().data.norm(2)
+            total_norm[key] += param_norm.item() ** 2
+        total_norm[key] = total_norm[key] ** 0.5
+        print(f"{key} norm grad: {total_norm[key]}")
+    return total_norm
 
 if __name__ == "__main__":
     main()

@@ -5,6 +5,63 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
 
+class UpSample1d(nn.Module):
+    def __init__(self, layer_type):
+        super().__init__()
+        self.layer_type = layer_type
+
+    def forward(self, x):
+        if self.layer_type == 'none':
+            return x
+        else:
+            return F.interpolate(x, scale_factor=2, mode='nearest')
+
+
+class ResBlk1dUp(nn.Module):
+    def __init__(self, dim_in, dim_out, actv=nn.LeakyReLU(0.2),
+                 upsample='none', dropout_p=0.0):
+        super().__init__()
+        self.actv = actv
+        self.upsample_type = upsample
+        self.upsample = UpSample1d(upsample)
+        self.learned_sc = dim_in != dim_out
+        self._build_weights(dim_in, dim_out)
+        self.dropout = nn.Dropout(dropout_p)
+
+        if upsample == 'none':
+            self.pool = nn.Identity()
+        else:
+            self.pool = weight_norm(
+                nn.ConvTranspose1d(dim_in, dim_in, kernel_size=3, stride=2, groups=dim_in, padding=1, output_padding=1))
+
+    def _build_weights(self, dim_in, dim_out):
+        self.conv1 = weight_norm(nn.Conv1d(dim_in, dim_out, 3, 1, 1))
+        self.conv2 = weight_norm(nn.Conv1d(dim_out, dim_out, 3, 1, 1))
+        self.norm1 = nn.InstanceNorm1d(dim_in, affine=True)
+        self.norm2 = nn.InstanceNorm1d(dim_in, affine=True)
+        if self.learned_sc:
+            self.conv1x1 = weight_norm(nn.Conv1d(dim_in, dim_out, 1, 1, 0, bias=False))
+
+    def _shortcut(self, x):
+        x = self.upsample(x)
+        if self.learned_sc:
+            x = self.conv1x1(x)
+        return x
+
+    def _residual(self, x):
+        x = self.norm1(x)
+        x = self.actv(x)
+        x = self.pool(x)
+        x = self.conv1(self.dropout(x))
+        x = self.norm2(x)
+        x = self.actv(x)
+        x = self.conv2(self.dropout(x))
+        return x
+
+    def forward(self, x):
+        x = self._shortcut(x) + self._residual(x)
+        return x / math.sqrt(2)  # unit variance
+
 
 class ResBlk1d(nn.Module):
     def __init__(self, dim_in, dim_out, actv=nn.LeakyReLU(0.2),

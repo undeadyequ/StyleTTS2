@@ -23,7 +23,6 @@ from munch import Munch
 import yaml
 
 from Modules.latent_diffusion.ddpm_dit import LatentDiffusion
-from Modules.cfm.flow_matching import CFMDecoder
 
 
 class LearnedDownSample(nn.Module):
@@ -601,7 +600,6 @@ class DurationEncoder(nn.Module):
 
 def load_F0_models(path):
     # load F0 model
-
     F0_model = JDCNet(num_class=1, seq_len=192)
     params = torch.load(path, map_location='cpu')['net']
     F0_model.load_state_dict(params)
@@ -632,7 +630,16 @@ def load_ASR_models(ASR_MODEL_PATH, ASR_MODEL_CONFIG):
 
 
 def build_model(args, args_cfm, text_aligner, pitch_extractor, bert):
-    decoder = CFMDecoder(**args_cfm)
+    if "pe_mu_type" in args and args.pe_mu_type == "down_pe_up_mel":
+        from Modules.cfm.flow_matching_down_pe import CFMDecoder
+        decoder = CFMDecoder(**args_cfm)
+    elif  "pe_mu_type" in args and args.pe_mu_type == "up_mu_v2":
+        from Modules.cfm.flow_matching2 import CFMDecoder
+        decoder = CFMDecoder(**args_cfm)
+    else:
+        from Modules.cfm.flow_matching import CFMDecoder
+        decoder = CFMDecoder(**args_cfm)
+
     text_encoder = TextEncoder(channels=args.hidden_dim, kernel_size=5, depth=args.n_layer, n_symbols=args.n_token)
     predictor = ProsodyPredictor(style_dim=args.style_dim, d_hid=args.hidden_dim, nlayers=args.n_layer,
                                  max_dur=args.max_dur, dropout=args.dropout)

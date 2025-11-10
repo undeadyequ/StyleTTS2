@@ -1,0 +1,11 @@
+/home/rosen/data/ESD_24k/0019/Sad/0019_001378.wav|It would be a hard choice.
+/home/rosen/data/ESD_24k/0019/Sad/0019_001103.wav|He was still in the forest!
+/home/rosen/data/ESD_24k/0019/Happy/0019_000753.wav|He was still in the forest!
+/home/rosen/data/ESD_24k/0019/Happy/0019_001028.wav|It would be a hard choice.
+/home/rosen/data/ESD_24k/0019/Neutral/0019_000053.wav|He was still in the forest!
+/home/rosen/data/ESD_24k/0019/Neutral/0019_000328.wav|It would be a hard choice.
+/home/rosen/data/ESD_24k/0019/Neutral/0019_000064.wav|And we are so thirsty!
+/home/rosen/data/ESD_24k/0019/Angry/0019_000403.wav|He was still in the forest!
+/home/rosen/data/ESD_24k/0019/Angry/0019_000678.wav|It would be a hard choice.
+/home/rosen/data/ESD_24k/0019/Surprise/0019_001728.wav|It would be a hard choice.
+/home/rosen/data/ESD_24k/0019/Surprise/0019_001453.wav|He was still in the forest!

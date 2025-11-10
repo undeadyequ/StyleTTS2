@@ -228,6 +228,8 @@ class KDiffusion(Diffusion):
 
         # Compute weighted loss
         losses = F.mse_loss(x_denoised, x, reduction="none")
+        #print("x_denoised, x, losses, sigmas", torch.norm(x_denoised).item(), torch.norm(x).item(), torch.norm(losses).item(), sigmas)
+
         losses = reduce(losses, "b ... -> b", "mean")
         losses = losses * self.loss_weight(sigmas)
         loss = losses.mean()

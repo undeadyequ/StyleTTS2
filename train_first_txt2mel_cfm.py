@@ -53,9 +53,8 @@ def load_checkpoint_vocoder(filepath, device):
 
 logger = get_logger(__name__, log_level="DEBUG")
 
-
 @click.command()
-@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm_v4.yml', type=str)
+@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm_v10.yml', type=str)
 def main(config_path):
     config = yaml.safe_load(open(config_path))
 
@@ -78,6 +77,7 @@ def main(config_path):
 
     epochs = config.get('epochs_1st', 200)
     save_freq = config.get('save_freq', 2)
+    data_ratio = config.get('data_ratio', 1)
     log_interval = config.get('log_interval', 10)
     saving_epoch = config.get('save_freq', 2)
 
@@ -88,11 +88,12 @@ def main(config_path):
     root_path = data_params['root_path']
     min_length = data_params['min_length']
     OOD_data = data_params['OOD_data']
-
     max_len = config.get('max_len', 200)
 
     # load data
     train_list, val_list = get_data_path_list(train_path, val_path)
+    if data_ratio < 1:
+        train_list = train_list[:int(len(train_list) * data_ratio)] # to save time
 
     train_dataloader = build_dataloader(train_list,
                                         root_path,
@@ -138,6 +139,7 @@ def main(config_path):
     model_params = recursive_munch(config['model_params'])
     multispeaker = model_params.multispeaker
     model = build_model(model_params, config['cfm_config'], text_aligner, pitch_extractor, plbert)
+    cfg_dropout = config['cfm_config'].get("cfg_dropout", 0)
 
     best_loss = float('inf')  # best test loss
 
@@ -165,7 +167,8 @@ def main(config_path):
     with accelerator.main_process_first():
         if config.get('pretrained_model', '') != '':
             model, optimizer, start_epoch, iters = load_checkpoint(model, optimizer, config['pretrained_model'],
-                                                                   load_only_params=config.get('load_only_params', True))
+                                                                   load_only_params=config.get('load_only_params', True)
+                                                                   )
         else:
             start_epoch = 0
             iters = 0
@@ -413,7 +416,8 @@ def main(config_path):
                     real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
 
                     pe = torch.cat([real_norm.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
-                    mel_rec, _ = model.decoder(mu=en, mask=mask, n_timesteps=200, temperature=1.0, c=s, seq_style=pe, p_mask=mask)
+                    cfg_strength = 3 if cfg_dropout > 0 else None
+                    mel_rec, _ = model.decoder(mu=en, mask=mask, n_timesteps=200, temperature=1.0, c=s, seq_style=pe, p_mask=mask, cfg_strength=cfg_strength)
 
                     # add vocoder
                     c = mel_rec.squeeze()
@@ -426,7 +430,7 @@ def main(config_path):
                     if bib >= 6:
                         break
 
-            if epoch % saving_epoch == 0:
+            if epoch % saving_epoch == 0 and epoch != start_epoch:
                 if (loss_test / iters_test) < best_loss:
                     best_loss = loss_test / iters_test
                 print('Saving model..')

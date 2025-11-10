@@ -1,0 +1,36 @@
+# no surprise
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch40_acoEnc_glb_psdEnc_psd_alpha1_beta1: 2.8306 ± 0.5049
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch40_acoDiff_glb_psdDiff_psd_alpha0_beta0: 2.2150 ± 0.5394
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch40_mix_glb_mix_psd_alpha0.3_beta0.7: 2.7780 ± 0.4884
+
+
+# Use surprise (Fix)
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch40_acoEnc_glb_psdEnc_psd_alpha1_beta1: 2.8594 ± 0.4137
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch40_acoDiff_glb_psdDiff_psd_alpha0_beta0: 2.2085 ± 0.5582
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch40_mix_glb_mix_psd_alpha0.3_beta0.7: 2.7171 ± 0.5149
+
+## cfm_v5
+Average UTMOS-v2 of res/mdit_cfm_v5_epoch38_acoEnc_glb_psdEnc_psd_alpha1_beta1: 2.5236 ± 0.5231
+Average UTMOS-v2 of res/mdit_cfm_v5_epoch38_acoDiff_glb_psdDiff_psd_alpha0_beta0: 2.3289 ± 0.4645
+Average UTMOS-v2 of res/mdit_cfm_v5_epoch38_mix_glb_mix_psd_alpha0.3_beta0.7: 2.5798 ± 0.4406
+
+## styleTTS2_txt2mel
+Average UTMOS-v2 of res/styletts2_txt2mel_epoch28_mix_glb_mix_psd_alpha0.3_beta0.7: 3.0864 ± 0.3750
+Average UTMOS-v2 of res/styletts2_txt2mel_epoch28_acoEnc_glb_psdEnc_psd_alpha1_beta1: 3.3261 ± 0.3561
+Average UTMOS-v2 of res/styletts2_txt2mel_epoch28_acoDiff_glb_psdDiff_psd_alpha0_beta0: 2.9072 ± 0.3859
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch38_acoEnc_glb_psdEnc_psd_alpha1_beta1: 2.8421 ± 0.4240
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch38_acoDiff_glb_psdDiff_psd_alpha0_beta0: 2.2161 ± 0.4616
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch38_mix_glb_mix_psd_alpha0.3_beta0.7: 2.7179 ± 0.4143
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch36_acoEnc_glb_psdEnc_psd_alpha1_beta1: 2.8280 ± 0.5030
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch36_acoDiff_glb_psdDiff_psd_alpha0_beta0: 2.2201 ± 0.4650
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch36_mix_glb_mix_psd_alpha0.3_beta0.7: 2.5805 ± 0.4316
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch30_acoEnc_glb_psdEnc_psd_alpha1_beta1: 2.8378 ± 0.3805
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch30_acoDiff_glb_psdDiff_psd_alpha0_beta0: 2.1964 ± 0.4477
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch30_mix_glb_mix_psd_alpha0.3_beta0.7: 2.6807 ± 0.3926
+
+
+## cfm_v5 (no_diff)
+Average UTMOS-v2 of res/mdit_cfm_v8_epoch14_mix_glb_mix_psd_alpha0.3_beta0.7: 1.9618 ± 0.3970
+Average UTMOS-v2 of res/mdit_cfm_v8_epoch26_acoEnc_glb_psdEnc_psd_alpha1_beta1: 2.8209 ± 0.4184
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch26_acoEnc_glb_psdEnc_psd_alpha1_beta1: 2.7081 ± 0.4036
+Average UTMOS-v2 of res/mdit_cfm_v4_epoch26_acoDiff_glb_psdDiff_psd_alpha0_beta0: 2.2400 ± 0.5727

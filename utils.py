@@ -10,6 +10,7 @@ import torchaudio
 import librosa
 import matplotlib.pyplot as plt
 from munch import Munch
+import os
 
 def maximum_path(neg_cent, mask):
   """ Cython optimized version.
@@ -97,3 +98,22 @@ def r1_reg(d_out, x_in):
     return reg
 
 
+def append_sentence_to_file(file_path, sentence):
+    """
+    Append a sentence to the end of a file.
+    If the file does not exist, it will be created automatically.
+
+    Args:
+        file_path (str): Path to the file.
+        sentence (str): The sentence to append.
+    """
+    # Ensure the parent directory exists
+    os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
+
+    # Open the file in append mode ("a" creates it if it doesn't exist)
+    with open(file_path, "a", encoding="utf-8") as f:
+        # Add newline if file already has content
+        if os.path.getsize(file_path) > 0:
+            f.write("\n")
+        f.write(sentence)
+    print(f"Sentence appended successfully to {file_path!r}.")
