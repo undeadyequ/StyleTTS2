@@ -160,6 +160,7 @@ def evaluate_wer(speech_dir, output_csv="wer_results.csv"):
         f.write(f"Substitution: {sub:.2f}%")
         f.write(f"Deletion: {dele:.2f}%")
         f.write(f"Insertion: {ins:.2f}%")
+    return wer, sub, dele, ins
 
 
 if __name__ == '__main__':

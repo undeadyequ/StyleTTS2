@@ -1,17 +1,17 @@
 ## Do not joint training Style encoder
 
-log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v10"   # CHANGE
+log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_dit_v1"   # CHANGE
 first_stage_path: "first_stage.pth"
 data_ratio: 1
 save_freq: 2
 log_interval: 10
 device: "cuda"
 epochs_1st: 50 # number of epochs for first stage training (pre-training)
-epochs_2nd: 80 # number of peochs for second stage training (joint training)
+epochs_2nd: 50 # number of peochs for second stage training (joint training)
 batch_size: 16  # 1st: 32, 2nd: 16
 max_len: 600 # maximum number of frames 600
 #pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm/epoch_2nd_00014.pth"
-pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v10/epoch_2nd_00064.pth"
+pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_dit_v1/epoch_2nd_00030.pth"
 second_stage_load_pretrained: true # set to true if the pre-trained model is for 2nd stage
 load_only_params: false # set to true if do not want to load epoch numbers and optimizer parameters
 
@@ -37,7 +37,6 @@ preprocess_params:
 
 model_params:
   multispeaker: true
-  learn_monoAttn: false
 
   dim_in: 64 
   hidden_dim: 512
@@ -50,6 +49,7 @@ model_params:
   max_dur: 50 # maximum duration of a single phoneme
   style_dim: 128 # style vector size   128 -> 256 -> 128
   dropout: 0.2
+  learn_monoAttn: false
 
   decoder:
     type: "mdit_cfm"
@@ -86,7 +86,6 @@ loss_params:
     
     lambda_mono: 1. # monotonic alignment loss (1st stage, TMA)
     lambda_s2s: 1. # sequence-to-sequence loss (1st stage, TMA)
-    lambda_monoAttn: 1.
     TMA_epoch: 5 # TMA starting epoch (1st stage)
 
     lambda_F0: 1. # F0 reconstruction loss (2nd stage)
@@ -124,5 +123,6 @@ cfm_config:
     kernel_size: 3
     p_dropout: 0.1
     gin_channels: 128
-    cross_attn: true           # global/seq style size
+    cross_attn: false           # force to false if official_dit is true
     cfg_dropout: 0.2
+    official_dit: true         # false

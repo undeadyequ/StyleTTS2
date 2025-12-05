@@ -37,34 +37,66 @@ from exp_utils_bk import get_synText_from_file, get_synStyle_from_file
 from pathlib import Path
 
 import os
-
-os.chdir("..")
-
+os.chdir("/home/rosen/Project/StyleTTS2")
+ckpt_root_dir = "/home/rosen/ckpt"
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-# load phonemizer
-textclenaer = TextCleaner()
-global_phonemizer = phonemizer.backend.EspeakBackend(language='en-us', preserve_punctuation=True,  with_stress=True)
-config = yaml.safe_load(open("/hdd/ckpt/styletts2_libriTTS/config.yml"))
 
-# load pretrained ASR model
-ASR_config = config.get('ASR_config', False)
-ASR_path = config.get('ASR_path', False)
-text_aligner = load_ASR_models(ASR_path, ASR_config)
 
-# load pretrained F0 model
-F0_path = config.get('F0_path', False)
-pitch_extractor = load_F0_models(F0_path)
+def get_pretrained_modules():
+    textclenaer = TextCleaner()
+    global_phonemizer = phonemizer.backend.EspeakBackend(language='en-us', preserve_punctuation=True, with_stress=True)
+    return global_phonemizer, textclenaer
 
-# load BERT model
-BERT_path = config.get('PLBERT_dir', False)
-plbert = load_plbert(BERT_path)
+def get_styletts2_model(ckpt="", config_f="", model_name=""):
+    config = yaml.safe_load(open(config_f))
 
-model_params = recursive_munch(config['model_params'])
-model = build_model(model_params, text_aligner, pitch_extractor, plbert)
-_ = [model[key].eval() for key in model]
-_ = [model[key].to(device) for key in model]
-params_whole = torch.load("/hdd/ckpt/styletts2_libriTTS/epochs_2nd_00020.pth", map_location='cpu')
-params = params_whole['net']
+    # load pretrained ASR model
+    ASR_config = config.get('ASR_config', False)
+    ASR_path = config.get('ASR_path', False)
+    text_aligner = load_ASR_models(ASR_path, ASR_config)
+
+    # load pretrained F0 model
+    F0_path = config.get('F0_path', False)
+    pitch_extractor = load_F0_models(F0_path)
+
+    # load BERT model
+    BERT_path = config.get('PLBERT_dir', False)
+    plbert = load_plbert(BERT_path)
+
+    model_params = recursive_munch(config['model_params'])
+    model = build_model(model_params, text_aligner, pitch_extractor, plbert)
+    _ = [model[key].eval() for key in model]
+    _ = [model[key].to(device) for key in model]
+    params_whole = torch.load(ckpt, map_location='cpu')
+    params = params_whole['net']
+
+    for key in model:
+        if key in params:
+            print('%s loaded' % key)
+            try:
+                model[key].load_state_dict(params[key])
+            except:
+                from collections import OrderedDict
+                state_dict = params[key]
+                new_state_dict = OrderedDict()
+                for k, v in state_dict.items():
+                    name = k[7:]  # remove `module.`
+                    new_state_dict[name] = v
+                # load params
+                model[key].load_state_dict(new_state_dict, strict=False)
+    #             except:
+    #                 _load(params[key], model[key])
+    _ = [model[key].eval() for key in model]
+
+    sampler = DiffusionSampler(
+        model.diffusion.diffusion,
+        sampler=ADPM2Sampler(),
+        sigma_schedule=KarrasSchedule(sigma_min=0.0001, sigma_max=3.0, rho=9.0),  # empirical parameters
+        clamp=False
+    )
+
+    return model, sampler, model_params
+
 
 to_mel = torchaudio.transforms.MelSpectrogram(
     n_mels=80, n_fft=2048, win_length=1200, hop_length=300)
@@ -81,7 +113,7 @@ def preprocess(wave):
     mel_tensor = (torch.log(1e-5 + mel_tensor.unsqueeze(0)) - mean) / std
     return mel_tensor
 
-def compute_style(path):
+def compute_style(path, model):
     wave, sr = librosa.load(path, sr=24000)
     audio, index = librosa.effects.trim(wave, top_db=30)
     if sr != 24000:
@@ -95,7 +127,9 @@ def compute_style(path):
     return torch.cat([ref_s, ref_p], dim=1)
 
 
-def inference(text, ref_s, alpha=0.3, beta=0.7, diffusion_steps=5, embedding_scale=1):
+def inference(text, ref_s, model, sampler, model_params, alpha=0.3, beta=0.7, diffusion_steps=5, embedding_scale=1):
+    global_phonemizer, textclenaer = get_pretrained_modules()
+
     text = text.strip()
     ps = global_phonemizer.phonemize([text])
     ps = word_tokenize(ps[0])
@@ -161,30 +195,6 @@ def inference(text, ref_s, alpha=0.3, beta=0.7, diffusion_steps=5, embedding_sca
 
     return out.squeeze().cpu().numpy()[..., :-50]  # weird pulse at the end of the model, need to be fixed later
 
-for key in model:
-    if key in params:
-        print('%s loaded' % key)
-        try:
-            model[key].load_state_dict(params[key])
-        except:
-            from collections import OrderedDict
-            state_dict = params[key]
-            new_state_dict = OrderedDict()
-            for k, v in state_dict.items():
-                name = k[7:] # remove `module.`
-                new_state_dict[name] = v
-            # load params
-            model[key].load_state_dict(new_state_dict, strict=False)
-#             except:
-#                 _load(params[key], model[key])
-_ = [model[key].eval() for key in model]
-
-sampler = DiffusionSampler(
-    model.diffusion.diffusion,
-    sampler=ADPM2Sampler(),
-    sigma_schedule=KarrasSchedule(sigma_min=0.0001, sigma_max=3.0, rho=9.0), # empirical parameters
-    clamp=False
-)
 text = ''' StyleTTS 2 is a text to speech model that leverages style diffusion and adversarial training with large speech language models to achieve human level text to speech synthesis. '''
 reference_dicts = {}
 reference_dicts['696_92939'] = "Demo/reference_audio/696_92939_000016_000006.wav"
@@ -192,40 +202,48 @@ reference_dicts['1789_142896'] = "Demo/reference_audio/1789_142896_000022_000005
 
 start = time.time()
 noise = torch.randn(1, 1, 256).to(device)
-
 ref_texts = []
 
-def syn_speech(synTexts, syn_styles, out_dir, sr=16000):
+def syn_speech(synTexts, syn_styles, out_dir, model, sampler, model_params, alpha=0.3, beta=0.7, diffusion_steps=10, embedding_scale=1, sr=24000):
     for i, ref_s in enumerate(syn_styles):
         spk, emo, ref_txt, speech_path = ref_s
         ref_texts.append(ref_txt) if ref_txt not in ref_texts else ref_texts
         r_id = ref_texts.index(ref_txt)
-        ref_s = compute_style(speech_path)
+        try:
+            ref_s = compute_style(speech_path, model)
+        except:
+            raise IOError(speech_path)
         for k, text in enumerate(synTexts):
-            audio_output = inference(text, ref_s, alpha=0.3, beta=0.7, diffusion_steps=10, embedding_scale=1)
+            audio_output = inference(text, ref_s, model, sampler, model_params, alpha=alpha, beta=beta, diffusion_steps=diffusion_steps,
+                                     embedding_scale=embedding_scale)
             rtf = (time.time() - start) / (len(audio_output) / 24000)
             speech_id = f'spk{spk}_{emo}_ref{r_id}_syn{k}'
             wav_n = f'{out_dir}/{speech_id}.wav'
             txt_f = f'{out_dir}/{speech_id}.lab'
             audio_output = torch.from_numpy(audio_output).unsqueeze(0)
             # --- resample from 24kHz → 16kHz ---
-            resampler = torchaudio.transforms.Resample(orig_freq=24000, new_freq=sr)
-            audio_output = resampler(audio_output)
-
+            #resampler = torchaudio.transforms.Resample(orig_freq=24000, new_freq=sr)
+            #audio_output = resampler(audio_output)
             torchaudio.save(wav_n, audio_output, sr)
             with open(txt_f, "w") as file1:
                 file1.write(text)
 
 if __name__ == '__main__':
-    style = "exp/data/r1_50.txt"  # r1
-    txt = "exp/data/s1_5.txt"    # s1
+    style = "exp/data/r1_test.txt"  # r1
+    txt = "exp/data/s1_test.txt"    # s1
     dataset = "esd"  # libritts
+
+    # get model
+
+    model, sampler, model_params = get_styletts2_model(ckpt=f"{ckpt_root_dir}/styletts2_libriTTS/epochs_2nd_00020.pth",
+                                                              config_f=f"{ckpt_root_dir}/styletts2_libriTTS/config.yml",
+                                                              model_name="styletts2")
 
     syn_styles = get_synStyle_from_file(style, split_char='|', dataset_name=dataset)  # emotion changed
     synTexts = get_synText_from_file(txt)
     #out_dir = "/hdd/StableTTS/exp/styletts2/random_10"
-    out_dir = "/hdd/drawspeech/log/exp/lddpm_esd_basic/styletts2/random"
+    out_dir = f"/home/rosen/ckpt/exp/mdit_tts_{dataset}_test/styletts2/random"
 
     if not os.path.isdir(out_dir):
         Path(out_dir).mkdir(exist_ok=True, parents=True)
-    syn_speech(synTexts, syn_styles, out_dir)
+    syn_speech(synTexts, syn_styles, out_dir, model, sampler, model_params)

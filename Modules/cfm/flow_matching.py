@@ -4,15 +4,17 @@ import torch.nn.functional as F
 
 import functools
 from torchdiffeq import odeint
+from utilities.vis import save_plot
 
 from Modules.ditmodules.estimator import Decoder
 from Modules.latent_diffusion.pre_dit_modules import ResBlk1d
 from torch.nn.utils import weight_norm
+from utilities.guide_mask import make_guided_attention_masks2
 # modified from https://github.com/shivammehta25/Matcha-TTS/blob/main/matcha/models/components/flow_matching.py
 
 class CFMDecoder(torch.nn.Module):
     def __init__(self, noise_channels, cond_channels, hidden_channels, out_channels, filter_channels, n_heads, n_layers,
-                 kernel_size, p_dropout, gin_channels, cross_attn, residual_dim=64, dim_in=512, cfg_dropout=0):
+                 kernel_size, p_dropout, gin_channels, cross_attn, residual_dim=64, dim_in=512, cfg_dropout=0, official_dit=False):
         super().__init__()
         self.noise_channels = noise_channels
         self.cond_channels = cond_channels
@@ -23,7 +25,7 @@ class CFMDecoder(torch.nn.Module):
         self.sigma_min = 1e-4
         self.cross_attn = cross_attn
         self.estimator = Decoder(noise_channels, cond_channels, hidden_channels, out_channels, filter_channels, p_dropout, n_layers,
-                                 n_heads, kernel_size, gin_channels, cross_attn=cross_attn)
+                                 n_heads, kernel_size, gin_channels, cross_attn=cross_attn, official_dit=official_dit)
 
         # adpative to styleTTS input (pitch/energy)
 
@@ -48,10 +50,8 @@ class CFMDecoder(torch.nn.Module):
             self.fake_pe = nn.Parameter(torch.zeros(1, pe_emb_dim, 1))
 
     @torch.no_grad()
-    def forward(self, mu, mask, n_timesteps, temperature=1.0, c=None, seq_style=None, p_mask=None, solver=None, cfg_strength=None,
-                q_f_pos=None, k_f_pos=None):
+    def forward(self, mu, mask, n_timesteps, temperature=1.0, c=None, seq_style=None, p_mask=None, solver=None, cfg_strength=None, mono_guide_delta=0):
         """Forward diffusion
-
         Args:
             mu (torch.Tensor): output of encoder
                 shape: (batch_size, n_feats, mel_timesteps)
@@ -68,38 +68,55 @@ class CFMDecoder(torch.nn.Module):
             sample: generated mel-spectrogram
                 shape: (batch_size, n_feats, mel_timesteps)
         """
-
+        # preprocess mu, seq_style, and t_span
         mu = F.interpolate(mu, scale_factor=2, mode="nearest")
         mu = self.asr_res(mu)
         seq_style = self.pe_encode(seq_style)
-
         z = torch.randn_like(mu) * temperature
         t_span = torch.linspace(0, 1, n_timesteps + 1, device=mu.device)
 
-        mask = torch.ones([z.size(0), 1, z.size(-1)]).to(z.device)
-        p_mask = torch.ones([seq_style.size(0), 1, seq_style.size(-1)]).to(z.device)
+        # create mask
+        mask = torch.ones([z.size(0), 1, z.size(-1)]).to(z.device)   # currently mask not worked
+        p_mask = torch.ones([seq_style.size(0), 1, seq_style.size(-1)]).to(z.device) # currently mask not worked
+        ilens = [z[i].size(-1) for i in range(z.size(0))]
+        olens = [seq_style[i].size(-1) for i in range(seq_style.size(0))]
+
+        #regularize_attn_map = make_guided_attention_masks2(ilens, olens, max_len=max(ilens), base_sigma=mono_guide_delta, eps=0.002)  # diagonal:0, other:->1
+        regularize_attn_map = make_guided_attention_masks2(ilens, olens, base_sigma=mono_guide_delta, eps=0.002)  # diagonal:0, other:->1
+        #inf_min = -torch.finfo(regularize_attn_map.dtype).max
+        #regularize_attn_map = torch.where(regularize_attn_map > 0.6, inf_min , torch.tensor(0.0))
+        #regularize_attn_map.masked_fill_(regularize_attn_map > 0.6, -torch.finfo(regularize_attn_map.dtype).max)
+        #regularize_attn_map.masked_fill_(regularize_attn_map <= 0.6, 0)
+        regularize_attn_map = 1 - regularize_attn_map
+        print_mono_guide_delta = str(mono_guide_delta).replace(".", "").replace("-", "m")
+        save_plot(regularize_attn_map[0].detach().cpu(), f"monoMask_guassion_{print_mono_guide_delta}.png")
+
 
         # cfg control
         if cfg_strength is None:
             ### TODO-S: tempt code for returning attn_map of dit at t=0
-            _, attn_maps = self.estimator(t_span[0], z, mask=mask, mu=mu, c=c,seq_style=seq_style, p_mask=p_mask, return_attn_map=True)
-            estimator = functools.partial(self.estimator, mask=mask, mu=mu, c=c,seq_style=seq_style, p_mask=p_mask, return_attn_map=False)
+            _, attn_maps = self.estimator(t_span[0], z, mask=mask, mu=mu, c=c, seq_style=seq_style,
+                                          p_mask=p_mask, return_attn_map=True, regularize_attn_map=regularize_attn_map)  # for attn_maps
+            estimator = functools.partial(self.estimator, mask=mask, mu=mu, c=c, seq_style=seq_style,
+                                          p_mask=p_mask, return_attn_map=False, regularize_attn_map=regularize_attn_map) # for trajectory
         else:
             if self.cfg_dropout <= 0:
                 raise IOError("cfg_dropout should bigger than 0 in training if you want cfg in inference!!!")
-            _, attn_maps = self.cfg_wrapper(t_span[0], z, mask=mask, mu=mu, c=c, cfg_strength=cfg_strength, seq_style=seq_style, p_mask=p_mask, return_attn_map=True)
-            estimator = functools.partial(self.cfg_wrapper, mask=mask, mu=mu, c=c, cfg_strength=cfg_strength, seq_style=seq_style, p_mask=p_mask, return_attn_map=False)
+            _, attn_maps = self.cfg_wrapper(t_span[0], z, mask=mask, mu=mu, c=c, cfg_strength=cfg_strength, seq_style=seq_style,
+                                            p_mask=p_mask, return_attn_map=True, regularize_attn_map=regularize_attn_map)
+            estimator = functools.partial(self.cfg_wrapper, mask=mask, mu=mu, c=c, cfg_strength=cfg_strength, seq_style=seq_style,
+                                          p_mask=p_mask, return_attn_map=False, regularize_attn_map=regularize_attn_map)
         ### TODO-B
         trajectory = odeint(estimator, z, t_span, method=solver, rtol=1e-5, atol=1e-5)
         return trajectory[-1], attn_maps
     
     # cfg inference
-    def cfg_wrapper(self, t, x, mask, mu, c, cfg_strength, seq_style=None, p_mask=None, return_attn_map=False):
+    def cfg_wrapper(self, t, x, mask, mu, c, cfg_strength, seq_style=None, p_mask=None, return_attn_map=False, regularize_attn_map=None):
         fake_glb = self.fake_glb.repeat(x.size(0), 1)
         fake_content = self.fake_content.repeat(x.size(0), 1, x.size(-1))
         fake_pe = self.fake_pe.repeat(seq_style.size(0), 1, seq_style.size(-1))
 
-        cond_output = self.estimator(t, x, mask, mu, c, seq_style, p_mask, return_attn_map)
+        cond_output = self.estimator(t, x, mask, mu, c, seq_style, p_mask, return_attn_map, regularize_attn_map=regularize_attn_map)
         uncond_output = self.estimator(t, x, mask, fake_content, fake_glb, fake_pe, p_mask, return_attn_map)
         #uncond_output = self.estimator(t, x, mask, fake_content, fake_speaker, None, None, return_attn_map)
 

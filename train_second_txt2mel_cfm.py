@@ -23,6 +23,7 @@ from Modules.hifi_gan.vocoder import Generator
 import glob
 from utils import r1_reg, adv_loss
 import json
+from utilities.guide_mask import make_guided_attention_masks2
 
 
 # simple fix for dataparallel that allows access to class attributes
@@ -123,6 +124,8 @@ def main(config_path):
     # build model
     model_params = recursive_munch(config['model_params'])
     multispeaker = model_params.multispeaker
+    learn_monoAttn = model_params.learn_monoAttn
+
     model = build_model(model_params, config['cfm_config'], text_aligner, pitch_extractor, plbert)
     cfg_dropout = config['cfm_config'].get("cfg_dropout", 0)
     style_dim = model_params.style_dim
@@ -360,7 +363,17 @@ def main(config_path):
             optimizer.zero_grad()
             pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
             loss_cfm, attn_maps = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s,
-                                                             seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1))
+                                                             seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1))  #!! monoAttn loss is not used
+            ### wait for test
+            if learn_monoAttn:
+                blk, batch, head, ql, kl = attn_maps.shape
+                mask_delta = np.random.randint(2, 8) * 0.1  # (0, 0.8)
+                mel_len_for_guidance_matrix = torch.ones([len(mel_input_length), ]) * mel_len
+                guide_matrix = make_guided_attention_masks2(ilens=mel_len_for_guidance_matrix, olens=mel_len_for_guidance_matrix, max_len=ql, base_sigma=mask_delta, eps=0.002)  # (b, ilens_max, olens_max)
+                guide_matrix = guide_matrix.unsqueeze(1).unsqueeze(0).repeat(blk, 1, head, 1, 1)
+                loss_monoAttn = torch.mean(attn_maps * guide_matrix)
+            else:
+                loss_monoAttn = 0
 
             # dur ce loss
             loss_ce = 0
@@ -385,7 +398,8 @@ def main(config_path):
                      loss_params.lambda_norm * loss_norm_rec + \
                      loss_params.lambda_dur * loss_dur + \
                      loss_params.lambda_sty * loss_sty + \
-                     loss_params.lambda_diff * loss_diff
+                     loss_params.lambda_diff * loss_diff + \
+                     loss_params.lambda_monoAttn * loss_monoAttn
 
             running_loss += loss_cfm
             g_loss.backward()
@@ -427,9 +441,9 @@ def main(config_path):
 
             if (i + 1) % log_interval == 0:
                 logger.info(
-                    'Epoch [%d/%d], Step [%d/%d], Loss: %.5f, cfm Loss: %.5f, Dur Loss: %.5f, CE Loss: %.5f, Norm Loss: %.5f, F0 Loss: %.5f, Sty Loss: %.5f, Diff Loss: %.5f'
+                    'Epoch [%d/%d], Step [%d/%d], Loss: %.5f, cfm Loss: %.5f, Dur Loss: %.5f, CE Loss: %.5f, Norm Loss: %.5f, F0 Loss: %.5f, Sty Loss: %.5f, Diff Loss: %.5f, monoAttn Loss: %.5f'
                     % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, running_loss / log_interval, loss_cfm,
-                       loss_dur, loss_ce, loss_norm_rec, loss_F0_rec, loss_sty, loss_diff))
+                       loss_dur, loss_ce, loss_norm_rec, loss_F0_rec, loss_sty, loss_diff, loss_monoAttn))
 
                 writer.add_scalar('train/cfm_loss', running_loss / log_interval, iters)
                 writer.add_scalar('train/ce_loss', loss_ce, iters)
@@ -438,6 +452,8 @@ def main(config_path):
                 writer.add_scalar('train/F0_loss', loss_F0_rec, iters)
                 writer.add_scalar('train/sty_loss', loss_sty, iters)
                 writer.add_scalar('train/diff_loss', loss_diff, iters)
+                writer.add_scalar('train/monoAttn', loss_monoAttn, iters)
+
                 running_loss = 0
 
                 # print grad
@@ -547,6 +563,7 @@ def main(config_path):
                     pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
                     loss_cfm, attn_maps = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s,
                                                                      seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1))
+
                     F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1))
                     loss_F0 = F.l1_loss(F0_real, F0_fake) / 10
 

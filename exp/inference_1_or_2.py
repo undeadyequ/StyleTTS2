@@ -1,5 +1,6 @@
 import os.path
 import shutil
+from itertools import accumulate
 
 import torch
 import sys
@@ -28,12 +29,13 @@ import librosa
 from nltk.tokenize import word_tokenize
 
 from models import build_model, load_ASR_models, load_F0_models
-from utils import recursive_munch, maximum_path, mask_from_lens, log_norm, append_sentence_to_file
+from utils import recursive_munch, maximum_path, mask_from_lens, log_norm, append_sentence_to_file, length_to_mask
 from text_utils import TextCleaner
 from Modules.diffusion.sampler import DiffusionSampler, ADPM2Sampler, KarrasSchedule
 import phonemizer
 from Utils.PLBERT.util import load_plbert
 from exp_utils_bk import get_synText_from_file, get_synStyle_from_file
+from exp_utils import save_attn_dict, extract_k_dur, save_psdcond
 from pathlib import Path
 from load_vocoder import get_vocoder
 import os
@@ -44,10 +46,10 @@ from vis2 import plot_f0_comparison
 from exec_utmosv2 import run_utmos
 
 nltk.download('punkt_tab')
+os.chdir('/home/rosen/Project/StyleTTS2')
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+#device = "cpu"
 
-os.chdir("..")
-#device = 'cuda' if torch.cuda.is_available() else 'cpu'
-device = "cpu"
 to_mel = torchaudio.transforms.MelSpectrogram(
     n_mels=80, n_fft=2048, win_length=1200, hop_length=300)
 mean, std = -4, 4
@@ -179,11 +181,6 @@ def get_second_model(ckpt="/home/rosen/ckpt/styletts2_libriTTS/epochs_2nd_00020.
 
     return model, sampler, model_params
 
-def length_to_mask(lengths):
-    mask = torch.arange(lengths.max()).unsqueeze(0).expand(lengths.shape[0], -1).type_as(lengths)
-    mask = torch.gt(mask+1, lengths.unsqueeze(1))
-    return mask
-
 def preprocess(wave):
     wave_tensor = torch.from_numpy(wave).float()
     mel_tensor = to_mel(wave_tensor)
@@ -205,10 +202,15 @@ def extract_mel_from_wav(wav, sr=24000):
     if sr != 24000:
         audio = librosa.resample(audio, sr, 24000)
     mel_tensor = preprocess(audio).to(device)
-    return mel_tensor
+
+    # cut to 1/2
+    mel_len = mel_tensor.size(-1)
+    acoustic_feature = mel_tensor[:, :, :(mel_len - mel_len % 2)]  # only even
+    return acoustic_feature
 
 def inference_first(text, ref_wav, model, out_wav_f):
     # process text
+    global_phonemizer, textclenaer = get_pretrained_modules()
     text = text.strip()
     ps = global_phonemizer.phonemize([text])
     ps = word_tokenize(ps[0])
@@ -255,15 +257,16 @@ def inference_first(text, ref_wav, model, out_wav_f):
 
 def inference_second(text, ref_wav, model, sampler, model_params,
                      alpha=0.3, beta=0.7, diffusion_steps=5, embedding_scale=1,
-                     wav_n=None, save_sr=24000, style_dim=256, mix_ref_pe_type="none", cfg_strength=None):
+                     style_dim=256, mix_ref_pe_type="none", cfg_strength=None,
+                     mono_guide_delta=0, fuse_beta=0.3):
     """
     args:
-
         alpha=0.3: weight of acoustic style using styleDiff against styleEnc.
         beta=0.7: weight of prosodic style using styleDiff against styleEnc.
         pe_type:  "ref_pe" or "pred_pe"
     """
     # process text
+    global_phonemizer, textclenaer = get_pretrained_modules()
     text = text.strip()
     ps = global_phonemizer.phonemize([text])
     ps = word_tokenize(ps[0])
@@ -304,6 +307,8 @@ def inference_second(text, ref_wav, model, sampler, model_params,
         duration = torch.sigmoid(duration).sum(axis=-1)
         pred_dur = torch.round(duration.squeeze()).clamp(min=1)
         pred_aln_trg = torch.zeros(input_lengths, int(pred_dur.sum().data))
+
+        pred_dur_accum = list(accumulate(pred_dur))
         c_frame = 0
         for i in range(pred_aln_trg.size(0)):
             pred_aln_trg[i, c_frame:c_frame + int(pred_dur[i].data)] = 1
@@ -339,7 +344,7 @@ def inference_second(text, ref_wav, model, sampler, model_params,
             voiced_mask = build_voiced_mask(ps_list, pred_aln_trg)
             voiced_mask_upsampled = F.interpolate(voiced_mask.unsqueeze(0).unsqueeze(0), scale_factor=2, mode='nearest').squeeze()
             F0_cond, N_cond, alpha = fuse_prosody_smooth_additive(F0_pred.squeeze(), N_pred.squeeze(), F0_ref.squeeze(),
-                                                        N_ref.squeeze(), voiced_mask_upsampled, tau=0.15)
+                                                                  N_ref.squeeze(), voiced_mask_upsampled, tau=0.15, beta=fuse_beta)
             F0_cond = F0_cond.unsqueeze(0)
             N_cond = N_cond.unsqueeze(0)
         else:
@@ -361,28 +366,42 @@ def inference_second(text, ref_wav, model, sampler, model_params,
             mel_rec = model.decoder(asr, F0_cond.squeeze().unsqueeze(0), N_cond.squeeze().unsqueeze(0), ref.squeeze().unsqueeze(0))
         elif model_params.decoder.type == "mdit_cfm":
             pe = torch.cat([N_cond.unsqueeze(1), F0_cond.unsqueeze(1)], dim=1)
-            mel_rec, _ = model.decoder(mu=asr, mask=None, n_timesteps=200, temperature=1.0, c=ref, seq_style=pe, p_mask=None, cfg_strength=cfg_strength)
+            mel_rec, attn_maps = model.decoder(mu=asr, mask=None, n_timesteps=200, temperature=1.0, c=ref, seq_style=pe, p_mask=None,
+                                               cfg_strength=cfg_strength, mono_guide_delta=mono_guide_delta)
         else:
             print(f"{model_params.decoder.type} is not wrong")
 
         # save mel
         c = mel_rec.squeeze()
         out = generator(c.unsqueeze(0))
-        return out.squeeze().cpu().numpy()[..., :-50], (F0_ref.squeeze(), F0_pred.squeeze(), F0_cond.squeeze())  # weird pulse at the end of the model, need to be fixed later
+        out = out.squeeze().cpu().numpy()[..., :-50]  # last 50 sounds not good
 
-def syn_speech_by_second_model(synTexts, syn_styles, out_dir, second_model, sampler, model_params, alpha=0.3, beta=0.7,
-                               style_dim=256, mix_ref_pe_type="none", Vis_F0=True, reference_dir="", cfg_strength=None):
-    # copy ref_dir
-    ref_dir = os.path.join(os.path.dirname(out_dir), reference_dir)
-    vis_dir = out_dir + "_vis"
-    if not os.path.isdir(ref_dir):
-        Path(ref_dir).mkdir(exist_ok=True, parents=True)
+        return out, (F0_ref.squeeze(), F0_pred.squeeze(), F0_cond.squeeze()), (N_ref.squeeze(), N_pred.squeeze(), N_cond.squeeze()), attn_maps, pred_dur  # weird pulse at the end of the model, need to be fixed later
+
+def syn_speech_by_second_model(synTexts, syn_styles, out_dir, second_model, sampler, model_params,
+                               alpha=0.3, beta=0.7, diffusion_steps=10, embedding_scale=1,
+                               style_dim=256, mix_ref_pe_type="none", Vis_F0=False, reference_dir="", cfg_strength=None,
+                               mono_guide_delta=0, save_attn=False, save_cond=False, fuse_beta=0.3, model_name="monoDiT", attn_filter=("0019", "Surprise")):
+    """
+    synthesize speech by synTexts and syn_styles
+    """
+    # ref_dir, out_dir, *_vis, *_attn
+    if len(reference_dir) > 0:
+        ref_dir = os.path.join(os.path.dirname(out_dir), reference_dir)
+        if not os.path.isdir(ref_dir):
+            Path(ref_dir).mkdir(exist_ok=True, parents=True)
     if not os.path.isdir(out_dir):
         Path(out_dir).mkdir(exist_ok=True, parents=True)
-    if not os.path.isdir(vis_dir):
-        Path(vis_dir).mkdir(exist_ok=True, parents=True)
+    if Vis_F0:
+        vis_dir = out_dir + "_vis"
+        if not os.path.isdir(vis_dir):
+            Path(vis_dir).mkdir(exist_ok=True, parents=True)
+    if not os.path.isdir(f'{out_dir}_attn'):
+        Path(f'{out_dir}_attn').mkdir(exist_ok=True, parents=True)
 
     ref_texts = []
+    attn_json = {}
+    psdcond_json = {}
     for i, ref_s in enumerate(syn_styles):
         spk, emo, ref_txt, speech_path = ref_s
         ref_texts.append(ref_txt) if ref_txt not in ref_texts else ref_texts
@@ -390,13 +409,15 @@ def syn_speech_by_second_model(synTexts, syn_styles, out_dir, second_model, samp
         #ref_s = compute_style(speech_path, second_model)
 
         # copy reference
-        r_wav_f = f'spk{spk}_{emo}_ref{r_id}.wav'
-        shutil.copy(speech_path, os.path.join(ref_dir, r_wav_f))
+        if len(reference_dir) > 0:
+            r_wav_f = f'spk{spk}_{emo}_ref{r_id}.wav'
+            shutil.copy(speech_path, os.path.join(ref_dir, r_wav_f))
 
         for k, text in enumerate(synTexts):
-            audio_output, (F0_ref, F0_pred, F0_cond) = inference_second(text, speech_path, second_model, sampler, model_params,
-                                            alpha=alpha, beta=beta, diffusion_steps=10, embedding_scale=1,
-                                            style_dim=style_dim, mix_ref_pe_type=mix_ref_pe_type, cfg_strength=cfg_strength)  # add model
+            audio_output, (F0_ref, F0_pred, F0_cond), (N_ref, N_pred, N_cond), attn_maps, pred_dur = inference_second(text, speech_path, second_model, sampler, model_params,
+                                            alpha=alpha, beta=beta, diffusion_steps=diffusion_steps, embedding_scale=embedding_scale,
+                                            style_dim=style_dim, mix_ref_pe_type=mix_ref_pe_type, cfg_strength=cfg_strength, mono_guide_delta=mono_guide_delta,
+                                                                                             fuse_beta=fuse_beta)  # add model
             if isinstance(audio_output, tuple):
                 audio_output = audio_output[0]
             speech_id = f'spk{spk}_{emo}_ref{r_id}_syn{k}'
@@ -404,16 +425,57 @@ def syn_speech_by_second_model(synTexts, syn_styles, out_dir, second_model, samp
             txt_f = f'{out_dir}/{speech_id}.lab'
             audio_output = torch.from_numpy(audio_output).unsqueeze(0)
             torchaudio.save(wav_n, audio_output, 24000)
-            if Vis_F0:
-                png_id = speech_id.split(".")[0]
-                plot_f0_comparison(F0_ref, F0_pred, F0_cond, out_path=f"{vis_dir}/{png_id}_f0.png")
             with open(txt_f, "w") as file1:
                 file1.write(text)
 
-if __name__ == '__main__':
-    # Get model
-    global_phonemizer, textclenaer = get_pretrained_modules()
+            if Vis_F0:
+                png_id = speech_id.split(".")[0]
+                plot_f0_comparison(F0_ref, F0_pred, F0_cond, out_path=f"{vis_dir}/{png_id}_f0.png")
+            if save_cond:
+                psdcond_json = save_psdcond(psdcond_json,(spk, emo, model_name),
+                                            (speech_id, F0_cond.cpu().squeeze(0).numpy().tolist(), N_cond.squeeze(0).cpu().numpy().tolist()))
 
+            if save_attn:
+                from utilities.vis import save_plot
+                # Save attn_map
+                if attn_filter[0] in speech_id and attn_filter[1] in speech_id:
+                    attn_path = f'{out_dir}_attn/{speech_id}.npy'
+                    np.save(attn_path, attn_maps.cpu().numpy())  ## [time, block_n, batch, head, t_t, t_s]
+                #save_plot(attn_maps[0, 0, 0].detach().cpu(), "attn.png")
+
+                # Get syn_phones, ref_phonemes, q_dur, k_dur
+                syn_phonemes, _ = get_phn(text)
+                ref_phonemes, ref_phone_tokens = get_phn(ref_txt)
+                q_dur = pred_dur
+                ref_mel = extract_mel_from_wav(speech_path)
+                k_dur = extract_k_dur(ref_mel, ref_phone_tokens, second_model, device)
+
+                attn_json = save_attn_dict(
+                    attn_json,
+                    (spk, emo, model_name),
+                    (speech_id, syn_phonemes, ref_phonemes, q_dur.squeeze(0).cpu().numpy().tolist(),
+                     k_dur.squeeze(0).cpu().numpy().tolist()))
+    return attn_json, psdcond_json
+
+
+def get_phn(text):
+    # phonemize
+    global_phonemizer, textclenaer = get_pretrained_modules()
+    text = text.strip()
+    ps = global_phonemizer.phonemize([text])
+    ps = word_tokenize(ps[0])
+
+    # tokenize
+    ps_str = ' '.join(ps)
+    tokens = textclenaer(ps_str)
+    tokens.insert(0, 0)
+    tokens = torch.LongTensor(tokens).to(device).unsqueeze(0)
+    return ps, tokens
+
+
+
+
+if __name__ == '__main__':
     model_root_dir = "/home/rosen/ckpt/styletts2_libriTTS/"
     model_config = {
         "styletts2_txt2mel": ["first_txt2mel/epoch_1st_00048.pth", "first_txt2mel/config_libritts_txt2mel.yml",
@@ -436,7 +498,7 @@ if __name__ == '__main__':
                         "first_txt2mel_cfm_v8/epoch_2nd_00024.pth",
                         "first_txt2mel_cfm_v8/config_libritts_txt2mel_cfm_v8.yml"],
         "mdit_cfm_v10": ["", "",
-                        "first_txt2mel_cfm_v10/epoch_2nd_00030.pth",
+                        "first_txt2mel_cfm_v10/epoch_2nd_00048.pth",
                         "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
     }
     #first_model_path, first_config = "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel/epoch_1st_00048.pth", "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel/config_libritts_txt2mel_first.yml"
@@ -465,9 +527,9 @@ if __name__ == '__main__':
     # test txt
     if TEST_TEXT:
         ### IN
-        style = "exp/data/libri_r1.txt"  # r1_50 r1_target libri_r1
-        txt = "exp/data/libri_s1.txt"  # s1_5 s1_target  libri_s1
-        dataset = "libritts"  # libritts
+        style = "exp/data/r1_test.txt"  # r1_50 r1_target libri_r1
+        txt = "exp/data/s1_test.txt"  # s1_5 s1_target  libri_s1
+        dataset = "esd"  # libritts esd
         slice_num = 0
         seed = 2
 
@@ -492,7 +554,7 @@ if __name__ == '__main__':
 
         glb_types = ["acoDiff_glb"]
         prd_types = ["psdDiff_psd"]
-        test_type = "monoStyle_compare"
+        test_type = "fuse_cond_test"  # monoStyle_compare
 
         #pe_types = ["gd_pe", "psdEnc_pe", "psdDiff_pe", "mix_pe", "ref_aware_pred_pe", "ref_pe"]  # NOT USED
         #dur_types = ["gd_dur", "psdEnc_dur", "psdDiff_dur", "mix_dur"]                            # NOT USED
@@ -504,7 +566,9 @@ if __name__ == '__main__':
         #glb_type = "acoDiff_glb"    # global style
         #prd_type = "psdDiff_psd"    # predict style  "stylediff"  "styleEnc"
 
-        mix_ref_pe_type = "none"                #  mix reference pitch/energy style: "none, ref_pred_gate, ref_pred_add, ref_pe"
+        mix_ref_pe_type = "ref_pred_add"                #  mix reference pitch/energy style: "none, ref_pred_gate, ref_pred_add, ref_pe"
+        #if mix_ref_pe_type == "ref_pred_add":
+        #    psd_cond_args = {tau=0.15, beta=0.8, threshold=0.1, smooth_sigma=1.2, smooth_kernel=9, mask_kernel=9, mask_sigma=1.5, post_smooth=False}
 
         cfg_strength = 3 if model_name in ["mdit_cfm_v10"] else None
         for seed in [0]:
@@ -516,11 +580,14 @@ if __name__ == '__main__':
                 epoch_n = second_model_path.split(".")[0][-2:]
                 style_dim = 512 if model_name in ["mdit_cfm_v5", "mdit_cfm_v3"] else 256
 
-                out_dir = f"res/{test_type}/{model_name}_epoch{epoch_n}_{dataset}_{glb_type}_{prd_type}_alpha{alpha}_beta{beta}_target{seed}_{mix_ref_pe_type}"
+                out_dir = f"res/{test_type}/{model_name}_epoch{epoch_n}_{dataset}_{glb_type}_{prd_type}_alpha{alpha}_beta{beta}_target{seed}_{mix_ref_pe_type}_fusebeta08_10_1_03"
+                #out_dir = f"/home/rosen/ckpt/exp/mdit_tts_{dataset}/monoDiT/random"
 
                 syn_speech_by_second_model(synTexts, syn_styles, out_dir, second_model=second_model, sampler=sampler,
                                            model_params=model_params, alpha=alpha, beta=beta, style_dim=style_dim,
-                                           mix_ref_pe_type=mix_ref_pe_type, reference_dir=f"reference_{dataset}", cfg_strength=cfg_strength)
+                                           mix_ref_pe_type=mix_ref_pe_type, reference_dir=f"reference_{dataset}",
+                                           cfg_strength=cfg_strength, diffusion_steps=10, embedding_scale=1, mono_guide_delta=0.8,  # inference args
+                                           Vis_F0=False, fuse_beta=0.3)
                 # Save utmos_v2 score
                 mean_mos, std_mos, mos_list = run_utmos(out_dir, 1)
                 print(f"\nAverage UTMOS-v2: {mean_mos:.4f} ± {std_mos:.4f}")

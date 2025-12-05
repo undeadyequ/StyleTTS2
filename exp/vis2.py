@@ -11,7 +11,7 @@ import matplotlib.patches as patches
 import whisper
 import pyworld as pw
 import torch
-
+from sympy.printing.pretty.pretty_symbology import line_width
 
 
 def plot_attn_with_rect(ax, title, attn, x_ltl_set, y_ltl_set, kwargs):
@@ -21,7 +21,8 @@ def plot_attn_with_rect(ax, title, attn, x_ltl_set, y_ltl_set, kwargs):
     ylabel, yticks, y_ticklabs = y_ltl_set
 
     ax.set_title(title, fontsize=kwargs["fontsize"])
-    pc = ax.pcolor(attn, cmap=plt.cm.Blues, alpha=0.9)
+    #pc = ax.pcolor(attn, cmap=plt.cm.Blues, alpha=0.9)
+    ax.imshow(attn.T, cmap="viridis", aspect="auto", origin="lower")
 
     ax.set_xticks(xticks)
     ax.set_yticks(yticks)
@@ -33,7 +34,7 @@ def plot_attn_with_rect(ax, title, attn, x_ltl_set, y_ltl_set, kwargs):
     else:
         ax.set_xticklabels([], visible=False)
     if y_ticklabs is not None:
-        ax.set_yticklabels(labels=y_ticklabs, fontsize=kwargs["fontsize"], rotation=kwargs["y_rotation"], va="center")
+        ax.set_yticklabels(labels=y_ticklabs, fontsize=kwargs["fontsize"], rotation=kwargs["y_rotation"], va="bottom")
     else:
         ax.set_yticklabels([], visible=False)
 
@@ -63,38 +64,76 @@ def plot_attn_with_rect(ax, title, attn, x_ltl_set, y_ltl_set, kwargs):
             ax.add_patch(plt.Rectangle((x, y), w, h, ls=rect_line_style, ec="red", fc="none", linewidth=rect_line_width))
     #ax.legend(loc='upper right')
 
-def plot_mel_with_pitch(ax, title, speech, x_ltl_set, kwargs, show_pitch=False):
+def plot_attn_with_rect2(ax, title, attn, x_ltl_set, y_ltl_set, kwargs):
+
+    xlabel, xticks, x_ticklabs = x_ltl_set
+    ylabel, yticks, y_ticklabs = y_ltl_set
+
+    ax.set_title(title, pad=8)
+
+    ax.imshow(attn.T, cmap="viridis", aspect="auto", origin="lower")
+
+    ax.set_xticks(xticks)
+    ax.set_yticks(yticks)
+
+    # Tick labels
+    if x_ticklabs is not None:
+        ax.set_xticklabels(x_ticklabs, fontsize=kwargs["fontsize"],
+                           rotation=kwargs["x_rotation"], ha="left")
+    else:
+        ax.set_xticklabels([])
+
+    if y_ticklabs is not None:
+        ax.set_yticklabels(y_ticklabs, fontsize=kwargs["fontsize"],
+                           rotation=kwargs["y_rotation"], va="bottom")
+    else:
+        ax.set_yticklabels([])
+
+    # Bold specific ticks
+    x_bold, y_bold = kwargs["xy_ticklabs_bold_index"]
+    for i, xt in enumerate(ax.get_xticklabels()):
+        if i in x_bold:
+            xt.set_fontweight("bold")
+    for i, yt in enumerate(ax.get_yticklabels()):
+        if i in y_bold:
+            yt.set_fontweight("bold")
+
+def plot_mel_with_pitch(ax, title, speech, x_ltl_set, kwargs, show_pitch=False, max_len=-1):
     y, sr = librosa.load(speech, sr=None)
-    hop_length = 200
-    sr = 16000
-    n_fft = 1024
+    #hop_length, sr, n_fft, n_mels = 200, 16000, 1024, 128
+    hop_length, sr, n_fft, n_mels = 300, 24000, 2048, 128  # 128 for clear
     xlabel, xticks, x_ticklabs = x_ltl_set
 
     # Compute mel spectrogram
-    S = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels=128)
+    S = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels=n_mels, fmax=8000, win_length=1200)
     S_dB = librosa.power_to_db(S, ref=np.max)
-    librosa.display.specshow(S_dB, x_axis=None, y_axis='mel', sr=sr, hop_length=hop_length, cmap='magma', ax=ax)
+    S_dB = S_dB[...,:max_len]
+    librosa.display.specshow(S_dB, x_axis=None, y_axis='mel', sr=sr, hop_length=hop_length, cmap='magma', ax=ax, fmax=8000, win_length=1200)
+
+    S = librosa.feature.melspectrogram(
+        y=y, sr=sr, n_fft=n_fft,
+        hop_length=hop_length, n_mels=n_mels,
+        fmax=8000,
+    )
+    S_dB = librosa.power_to_db(S, ref=np.max)
 
     # Estimate pitch (f0)
     if show_pitch:
-        pitch, t = pw.dio(
-            y.astype(np.float64),
-            sr,
-            frame_period=hop_length / sr * 1000)
+        pitch, t = pw.dio(y.astype(np.float64), sr, frame_period=hop_length / sr * 1000)
         pitch = pw.stonemask(y.astype(np.float64), pitch, t, sr)
         times = librosa.times_like(pitch, sr=sr, hop_length=hop_length)
         ax.plot(times, pitch, color='cyan', linewidth=1.5, label='Pitch')
         print("speech:{} len of f0 {} and x_ticks {}".format(speech, len(pitch), xticks[-1]))
     ax.set_title(title)
-    #ax.set_xticks(xticks)
-    #ax.set_xticklabels(labels=x_ticklabs, fontsize=kwargs["fontsize"], rotation=kwargs["x_rotation"], ha="left")
+
+    ax.set_xticks(xticks)
+    ax.set_xticklabels(labels=x_ticklabs, fontsize=kwargs["fontsize"], rotation=kwargs["x_rotation"], ha="left")
     #ax.set_xticks(xticks)
     #ax.set_xlabel(xlabel, fontsize=kwargs["fontsize"])
     #if x_ticklabs is not None:
     #    ax.set_xticklabels(labels=x_ticklabs, fontsize=kwargs["fontsize"], rotation=kwargs["x_rotation"], ha="left")
-
     #ax.set_xticks(xticks)
-    #ax.set_xlabel(xlabel)
+    ax.set_xlabel(xlabel)
 
     #### bold label
     if kwargs["xy_ticklabs_bold_index"][0] is not None:
@@ -113,7 +152,7 @@ def plot_mel_with_pitch(ax, title, speech, x_ltl_set, kwargs, show_pitch=False):
                 rect_line_width = 1.0
                 rect_line_style = "-"
             ax.add_patch(plt.Rectangle((x, y), w, h, ls=rect_line_style, ec="red", fc="none", linewidth=rect_line_width))
-    ax.legend(loc='upper right')
+    #ax.legend(loc='upper right')
 
     # Random rectangle dimensions in time-mel space
     """
@@ -132,7 +171,90 @@ def plot_mel_with_pitch(ax, title, speech, x_ltl_set, kwargs, show_pitch=False):
     )
     ax.add_patch(rect)
     """
+
+
+def plot_mel_with_pitch2(ax, title, speech, x_ltl_set, kwargs,
+                        show_pitch=False, max_len=-1):
+
+    y, sr = librosa.load(speech, sr=None)
+    hop_length, n_fft, n_mels = 300, 2048, 128
+
+    ylabel, xticks, x_ticklabs = x_ltl_set
+
+    S = librosa.feature.melspectrogram(
+        y=y, sr=sr,
+        n_fft=n_fft, hop_length=hop_length,
+        n_mels=n_mels, fmax=8000,
+        win_length=1200
+    )
+    S_dB = librosa.power_to_db(S, ref=np.max)
+    S_dB = S_dB[:, :max_len] if max_len > 0 else S_dB
+
+    librosa.display.specshow(
+        S_dB, cmap="magma",
+        sr=sr, hop_length=hop_length,
+        fmax=8000, ax=ax
+    )
+
+    ax.set_title(title, pad=8)
+
+    ax.set_xticks(xticks)
+    ax.set_xticklabels(
+        x_ticklabs,
+        fontsize=kwargs["fontsize"],
+        rotation=kwargs["x_rotation"],
+        ha="left"
+    )
+    ax.set_xlabel("")
+
+    # Bold tick labels
+    if kwargs["xy_ticklabs_bold_index"][0] is not None:
+        x_bold, _ = kwargs["xy_ticklabs_bold_index"]
+        for i, lab in enumerate(ax.get_xticklabels()):
+            if i in x_bold:
+                lab.set_fontweight("bold")
+
+    # Draw pitch contour if needed
+    if show_pitch:
+        pitch, t = pw.dio(y.astype(np.float64), sr, frame_period=hop_length / sr * 1000)
+        pitch = pw.stonemask(y.astype(np.float64), pitch, t, sr)
+        times = librosa.times_like(pitch, sr=sr, hop_length=hop_length)
+        ax.plot(times, pitch, lw=1.2, color="cyan")
+
+
+def plot_lines(ax, title, lines, labels, x_ltl_set, y_ltl_set):
+    colors = ["blue", "red", "green", "purple"]
+    linestyles = ["-", "--", ":", "-."]
+    alphas = [1.0, 1.0, 1.0, 1.0]
+    linewidths = [2.0, 2.0, 2.0, 2.0]
+
+    xlabel, _, _ = x_ltl_set
+    ylabel, _, _ = y_ltl_set
+
+    # axis labels and ticks
+    ax.set_xlabel(xlabel, fontsize=12)
+    ax.set_ylabel(ylabel, fontsize=12)
+    #ax.set_xticks(xticks)
+    #ax.set_xticklabels(x_ticklabs)
+    #ax.set_yticks(yticks)
+    #ax.set_yticklabels(y_ticklabs)
+
+    T = len(lines[0])
+    for i, (line, label) in enumerate(zip(lines, labels)):
+        if line != T:
+            line = np.interp(np.linspace(0, 1, T), np.linspace(0, 1, len(line)), line)
+        ax.plot(
+            line,
+            label=label,
+            color=colors[i % len(colors)],
+            linestyle=linestyles[i % len(linestyles)],
+            alpha=alphas[i % len(alphas)],
+            linewidth=linewidths[i % len(linewidths)]
+        )
+    ax.set_title(title)
     ax.legend(loc='upper right')
+    ax.grid(True, linestyle='--', alpha=0.3)
+
 
 
 def plot_attn_bk(attention):
@@ -218,8 +340,6 @@ def plot_simple_mel(audio_path, out_path):
     plt.savefig(out_path)
 
 
-
-
 def plot_f0_comparison(F0_ref, F0_pred, F0_fused, title="Pitch Comparison", out_path="pitch_compare.png"):
     """
     Visualize reference, predicted, and fused F0 contours.
@@ -248,6 +368,93 @@ def plot_f0_comparison(F0_ref, F0_pred, F0_fused, title="Pitch Comparison", out_
     plt.grid(True, linestyle='--', alpha=0.3)
     plt.tight_layout()
     plt.savefig(out_path)
+
+
+def plot_f0_multi(
+    f0_curves,              # list of arrays/tensors: [curve1, curve2, curve3, ...]
+    model_names,            # list of strings:      ["pred", "ref", "fused", ...]
+    title="Pitch Comparison",
+    out_path="pitch_compare.png",
+    target_len=None,
+    ref_idx=None,           # index of reference curve (optional)
+    need_interpolate=True
+):
+    """
+    Plot multiple F0 curves from different models.
+
+    Args:
+        f0_curves   : list of 1-D F0 sequences (torch.Tensor or numpy array)
+        model_names : list of legend names (same length as f0_curves)
+        ref_idx     : index of the reference F0 for special highlighting
+        target_len  : force all curves to this length; if None → use max length
+    """
+
+    assert len(f0_curves) == len(model_names), "Length mismatch between curves and names."
+
+    # Convert to numpy
+    curves_np = []
+    for c in f0_curves:
+        if isinstance(c, torch.Tensor):
+            c = c.detach().cpu().numpy()
+        curves_np.append(np.asarray(c))
+
+    # Determine target length
+    if target_len is None:
+        target_len = max(len(c) for c in curves_np)
+
+    # Interpolate all curves to target length
+    curves_resampled = []
+    if need_interpolate:
+        for c in curves_np:
+            if len(c) != target_len:
+                c = np.interp(
+                    np.linspace(0, 1, target_len),
+                    np.linspace(0, 1, len(c)),
+                    c
+                )
+            curves_resampled.append(c)
+        curves_np = curves_resampled
+
+    # Plot
+    plt.figure(figsize=(12, 5))
+
+    for i, (c, name) in enumerate(zip(curves_np, model_names)):
+        if i == ref_idx:
+            # Reference curve: highlight style
+            plt.plot(c, label=name, linewidth=2.0, linestyle=":", alpha=0.9)
+        else:
+            plt.plot(c, label=name, linewidth=1.4, alpha=0.85)
+
+    plt.title(title)
+    plt.xlabel("Frame index")
+    plt.ylabel("F₀ (Hz or log-scale)")
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.close()
+
+
+def draw_dtw(a, b, best_path, output_png="dtw_out.png"):
+    # -----------------------------
+    # Plot contours + alignment
+    # -----------------------------
+    plt.figure(figsize=(12, 5))
+
+    # plot both contours
+    plt.plot(a, label="Series A", color="blue")
+    plt.plot(b, label="Series B", color="red")
+
+    # draw alignment lines
+    for i, j in best_path:
+        plt.plot([i, j], [a[i], b[j]], color="gray", alpha=0.4, linewidth=0.8)
+
+    plt.xlabel("Time index")
+    plt.ylabel("Pitch (Hz)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_png)
+    plt.close()
 
 if __name__ == '__main__':
     import argparse

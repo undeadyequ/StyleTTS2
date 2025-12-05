@@ -12,13 +12,13 @@ from pymcd.mcd import Calculate_MCD
 mcd_toolbox = Calculate_MCD(MCD_mode="MCD-DTW")
 import sys, os, yaml, json
 import numpy as np
-from exp.exp_utils_bk import convert_xydur_xybox, clean_phone, cut_pad_a2b_len_left
+from exp.exp_utils import convert_xydur_xybox, clean_phone, cut_pad_a2b_len_left
 from exp.syllable import extend_phone2syl
 
 
 def convert_vis_psd_json(prosody_dict_json, show_ref_syn_id=(0, 0), cutpad_reference=False, fine_categ_labels=["random"], save_dict=("", "")):
     """
-    {"emo1": {"model1": {"psd1/phone": []}}} -> {"emo1": {"model1": (pitch_list, phone_list)}}}  {}
+    prosody_dict_json: {"emo1": {"model1": {"psd1/phone": []}}} -> {"emo1": {"model1": (pitch_list, phone_list)}}}  {}
     """
     nonref_model_name = ""
     pitch_dict_for_vis = dict()  # for_vis: {"emo1": {"model1": list(p_len)}}}
@@ -101,7 +101,9 @@ def phone2syl(syn_phones, syn_durs, syl_start_index):
     :param syn_phones: list of phones
     :param syn_durs: list of durs
     :param syl_start_index: list of syllable start index
-    :return: xticks, x_ticklabs
+    :return:
+    xticks:    ["a", ... ""]
+    x_ticklabs:[0, ... sum(dur)]
     """
     if len(syn_phones) != len(syn_durs):
         raise IOError("len of syn_phones {} and syn_durs {} should be same".format(len(syn_phones), len(syn_durs)))
@@ -213,7 +215,12 @@ def adapt_mix_2d_r_m1_m2(attn_dict_json, result_dir, show_t=0, show_b=5, show_h=
 def adapt_attn_2d_block_model(attn_dict_json, result_dir, show_t=0, show_h=0, show_txt=0, show_emo="Angry", tick_gran="phoneme",
                               model_ab=("cfm_dit_cross_distgl", "cfm_mdit_cross_distgl")):
     """
-    2d attns with dim0=block, dim1=model
+    args:
+    attn_dict_json: {emo: model: }
+
+    out: attn_2d_b_m_json:
+        X_Y: [attn,(x_label, xticks, x_ticklabs), (y_label, yticks, y_ticklabs), kwargs])
+
     content for each:
         title:
         attn_matrix:

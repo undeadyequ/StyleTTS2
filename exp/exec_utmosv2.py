@@ -44,7 +44,7 @@ def resample_folder_to_16k(src_dir: str, dst_dir: str):
     return out_paths
 
 
-def run_utmos(folder_16k: str, deterministic_seed: int = 42):
+def run_utmos(folder_16k: str, deterministic_seed: int = 42, output_file=None):
     """Run UTMOS-v2 on all wavs (no batch_size argument)."""
     set_deterministic(deterministic_seed)
     model = utmosv2.create_model(pretrained=True)
@@ -54,22 +54,29 @@ def run_utmos(folder_16k: str, deterministic_seed: int = 42):
     scores = np.array([item["predicted_mos"] for item in mos_list], dtype=float)
     mean_mos = float(scores.mean())
     std_mos = float(scores.std())
+
+    if output_file is not None:
+        with open(output_file, "w") as filehandle:
+            for item in mos_list:
+                filehandle.write(f"{item}\n")
+            filehandle.write(f"mean_mos: {mean_mos}\n")
+            filehandle.write(f"std_mos: {std_mos}\n")
     return mean_mos, std_mos, mos_list
 
 
 def main():
     parser = argparse.ArgumentParser(description="Resample to 16 kHz and evaluate UTMOS-v2.")
     parser.add_argument("--inp", required=True, help="Folder containing input wavs (e.g., 24 kHz).")
-    parser.add_argument("--out", required=True, help="Output folder for 16 kHz wavs.")
+    parser.add_argument("--out", required=False, help="Output folder for 16 kHz wavs.")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
-    print(f"[1/2] Resampling {args.inp} → {args.out} (16 kHz mono)...")
-    resampled_paths = resample_folder_to_16k(args.inp, args.out)
-    print(f"   Converted {len(resampled_paths)} files.")
+    #print(f"[1/2] Resampling {args.inp} → {args.out} (16 kHz mono)...")
+    #resampled_paths = resample_folder_to_16k(args.inp, args.out)
+    #print(f"   Converted {len(resampled_paths)} files.")
 
     print(f"[2/2] Evaluating UTMOS-v2 on {args.out} ...")
-    mean_mos, std_mos, mos_list = run_utmos(args.out, args.seed)
+    mean_mos, std_mos, mos_list = run_utmos(args.inp, args.seed)
 
     print(f"\nAverage UTMOS-v2: {mean_mos:.4f} ± {std_mos:.4f}")
     print(f"Files evaluated:", mos_list)

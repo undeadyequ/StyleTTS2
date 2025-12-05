@@ -101,8 +101,7 @@ class DiTConVBlock(nn.Module):
         self.adaLN_modulation = nn.Sequential(
             nn.Linear(gin_channels, hidden_channels) if gin_channels != hidden_channels else nn.Identity(),
             nn.SiLU(),
-            nn.Linear(hidden_channels, 6 * hidden_channels, bias=True)
-        )
+            nn.Linear(hidden_channels, 6 * hidden_channels, bias=True))
 
     def forward(self, x, c, x_mask):
         """
@@ -116,14 +115,11 @@ class DiTConVBlock(nn.Module):
         attn_mask = x_mask.unsqueeze(1) * x_mask.unsqueeze(-1)  # shape: [batch_size, 1, time, time]
         attn_mask = torch.zeros_like(attn_mask).masked_fill(attn_mask == 0, -torch.finfo(x.dtype).max)
 
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).unsqueeze(2).chunk(6,
-                                                                                                                     dim=1)  # shape: [batch_size, channel, 1]
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).unsqueeze(2).chunk(6, dim=1)  # shape: [batch_size, channel, 1]
         attn_out, attn_map = self.attn(self.modulate(self.norm1(x.transpose(1, 2)).transpose(1, 2), shift_msa, scale_msa), attn_mask)
         x = x + gate_msa * attn_out * x_mask
         x = x + gate_mlp * self.mlp(self.modulate(self.norm2(x.transpose(1, 2)).transpose(1, 2), shift_mlp, scale_mlp), x_mask)
-
         # save_plot(attn_map[0, 0].detach().cpu(), "attn_map.png")
-
         # no condition version
         # x = x + self.attn(self.norm1(x.transpose(1,2)).transpose(1,2),  attn_mask)
         # x = x + self.mlp(self.norm2(x.transpose(1,2)).transpose(1,2), x_mask)

@@ -34,6 +34,8 @@ from attrdict import AttrDict
 from Modules.hifi_gan.vocoder import Generator
 import glob
 from utils import r1_reg, adv_loss
+from utilities.guide_mask import make_guided_attention_masks2
+
 
 def scan_checkpoint(cp_dir, prefix):
     pattern = os.path.join(cp_dir, prefix + '*')
@@ -54,7 +56,7 @@ def load_checkpoint_vocoder(filepath, device):
 logger = get_logger(__name__, log_level="DEBUG")
 
 @click.command()
-@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm_v10.yml', type=str)
+@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm_v11.yml', type=str)
 def main(config_path):
     config = yaml.safe_load(open(config_path))
 
@@ -140,6 +142,8 @@ def main(config_path):
     multispeaker = model_params.multispeaker
     model = build_model(model_params, config['cfm_config'], text_aligner, pitch_extractor, plbert)
     cfg_dropout = config['cfm_config'].get("cfg_dropout", 0)
+    learn_monoAttn = model_params.learn_monoAttn
+
 
     best_loss = float('inf')  # best test loss
 
@@ -274,6 +278,20 @@ def main(config_path):
             pe = torch.cat([real_norm.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
             loss_cfm, attn_maps  = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s, seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1))
 
+            ### wait for test
+            if learn_monoAttn:
+                #from utilities.vis import save_plot
+                blk, batch, head, ql, kl = attn_maps.shape
+                mask_delta = np.random.randint(3, 8) * 0.1  # (0, 0.8)
+                mel_len_for_guidance_matrix = torch.ones([len(mel_input_length), ]) * mel_len
+                guide_matrix = make_guided_attention_masks2(ilens=mel_len_for_guidance_matrix, olens=mel_len_for_guidance_matrix, max_len=ql, base_sigma=mask_delta, eps=0.002)  # (b, ilens_max, olens_max)
+                #save_plot(guide_matrix[0].detach().cpu(), f"train_monoMask_guassion.png")
+                guide_matrix = guide_matrix.unsqueeze(1).unsqueeze(0).repeat(blk, 1, head, 1, 1)
+                loss_monoAttn = torch.mean(attn_maps * guide_matrix)
+
+            else:
+                loss_monoAttn = 0
+
             # generator loss (L1 part)
             optimizer.zero_grad()
             if epoch >= TMA_epoch:  # start TMA training
@@ -289,7 +307,8 @@ def main(config_path):
             g_loss = loss_params.lambda_mel * loss_cfm + \
                 loss_params.lambda_adv * loss_cfm + \
                 loss_params.lambda_mono * loss_mono + \
-                loss_params.lambda_s2s * loss_s2s
+                loss_params.lambda_s2s * loss_s2s + \
+                loss_params.lambda_monoAttn * loss_monoAttn
 
             running_loss += accelerator.gather(loss_cfm).mean().item()
             accelerator.backward(g_loss)
@@ -304,18 +323,18 @@ def main(config_path):
             iters = iters + 1
             if (i + 1) % log_interval == 0 and accelerator.is_main_process:
                 log_print(
-                    'Epoch [%d/%d], Step [%d/%d], Cfm Loss: %.5f, Gen Loss: %.5f, Mono Loss: %.5f, S2S Loss: %.5f'
-                    % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, running_loss / log_interval, g_loss, loss_mono, loss_s2s), logger)
+                    'Epoch [%d/%d], Step [%d/%d], Cfm Loss: %.5f, Gen Loss: %.5f, Mono Loss: %.5f, S2S Loss: %.5f, monoAttn: %.5f'
+                    % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, running_loss / log_interval, g_loss, loss_mono, loss_s2s, loss_monoAttn), logger)
             if (i + 1) % log_interval == 0:
                 logger.info(
-                    'Epoch [%d/%d], Step [%d/%d], Cfm Loss: %.5f, Adv Loss: %.5f, Mono Loss: %.5f, S2S Loss: %.5f'
+                    'Epoch [%d/%d], Step [%d/%d], Cfm Loss: %.5f, Adv Loss: %.5f, Mono Loss: %.5f, S2S Loss: %.5f, monoAttn: %.5f'
                     % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, running_loss / log_interval,
-                       loss_cfm.item(), loss_mono, loss_s2s))
+                       loss_cfm.item(), loss_mono, loss_s2s, loss_monoAttn))
                 writer.add_scalar('train/cfm_loss', running_loss / log_interval, iters)
                 writer.add_scalar('train/gen_loss', g_loss, iters)
                 writer.add_scalar('train/mono_loss', loss_mono, iters)
                 writer.add_scalar('train/s2s_loss', loss_s2s, iters)
-
+                writer.add_scalar('train/monoAttn', loss_monoAttn, iters)
                 running_loss = 0
                 print('Time elasped:', time.time() - start_time)
 

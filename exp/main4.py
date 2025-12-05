@@ -6,8 +6,7 @@ import torch
 import argparse
 from pathlib import Path
 from typing import Any, Dict, Optional, List, Tuple, Literal
-from exp.exp_utils_bk import (copy_ref_speech, fine_adjust_configs,
-                              get_synStyle_from_file, get_synText_from_file, renew_dict, combine_jsons)
+from exp.exp_utils import (copy_ref_speech, fine_adjust_configs, get_synStyle_from_file, get_synText_from_file, renew_dict, combine_jsons)
 from exp.vis_data_adaptor import convert_vis_psd_json, convert_attn_json, convert_attnEnh_json
 from exp.extract_psd import extract_psdave, extract_psd_fine_class, extract_psd
 from exp.visualization import vis_psd, vis_emo_crossAttn, vis_psd_enh, show_attn_map, show_two_attn_map, vis_mono_guide_mask, vis_dual_utmos_rmse
@@ -15,12 +14,12 @@ from exp.statcz_psd import statcz_psd_mcd, statcz_psd_fine_mcd
 
 from vis_data_adaptor import adapt_mix_2d_r_m1_m2, adapt_attn_2d_block_model
 from vis2 import cst_attn_2d_block_model, cst_melattn_2d_type_model
-from drawspeech.infer_exp import infer_exp
+#from infer_exp import infer_exp
 from exp.mel_config import MelConfig          ################ BE CAREFUL; Must same with draw?.yaml #########
 from tqdm import tqdm
 from exp.exp_wer import evaluate_wer
-from drawspeech.utilities.guide_mask import make_guided_attention_masks2
-from drawspeech.utilities.vis import save_plot
+from utilities.guide_mask import make_guided_attention_masks2
+from utilities.vis import save_plot
 
 def get_infer_json(styles, synTexts, ref_json, gd_dir=None):
     """
@@ -121,11 +120,13 @@ def main(
     if not os.path.isdir(gd_speech_dir):
         Path(gd_speech_dir).mkdir(exist_ok=True, parents=True)
 
+    """
     if not os.path.isfile(infer_json_path):
         infer_json = get_infer_json(syn_styles, synTexts, ref_json, gd_dir=gd_speech_dir)  # write ref/syn phoneme in infer.json
         json.dump(infer_json, open(infer_json_path, "w"), indent=1, ensure_ascii=False)
     else:
         infer_json = json.load(open(infer_json_path, "r"))
+    """
 
     ####### 0: syn text by single moddel (preprare) #######
     if start_step <= 0 <= end_step:
@@ -153,12 +154,12 @@ def main(
                 Path(ref_speech_dir).mkdir(exist_ok=True, parents=True)
             if not os.path.isdir(out_attn_dir) and save_attn and "dit" in model_name:
                 Path(out_attn_dir).mkdir(exist_ok=True, parents=True)
-
             if "dit" not in model_name:
                 save_attn = False
             # syn speech, save attn, copy ref, create attn_json (for exp)
-            _, attn_dict = infer_exp(infer_json, config_yaml_dict, config_yaml_path, exp_group_name, exp_name, syn_styles, synTexts,
-                                  out_speech_dir, ref_speech_dir, out_attn_dir, batch_size=8, save_attn=save_attn)  # should output out_attn_dir and attn_json_path
+            if "drawspeech" in model_name:
+                _, attn_dict = infer_exp(infer_json, config_yaml_dict, config_yaml_path, exp_group_name, exp_name, syn_styles,
+                                         synTexts, out_speech_dir, ref_speech_dir, out_attn_dir, batch_size=8, save_attn=save_attn) # should output out_attn_dir and attn_json_path
             if save_attn_json_file and attn_dict is not None:
                 with open(attn_json_path, "w", encoding="utf-8") as f:
                     f.write(json.dumps(attn_dict, sort_keys=True, indent=4))
@@ -315,9 +316,10 @@ if __name__ == "__main__":
     -1: Generate infer.json (3Type) from given style and text file
     0: Synthesize speech dir for each model and generate attn_json
     1: extract psd_json
-    2: compute statistics
+    2: CTW
     3: WER
-    4: vis attn
+    4: UTMOS_v2
+    5. vis attn
     5: vis attn/mel
     On doing: extract SIM-O and SIM-R  (?)
     """
@@ -325,7 +327,7 @@ if __name__ == "__main__":
     torch.manual_seed(seed)
     parser = argparse.ArgumentParser()
 
-    ##### 1. CONSTANTS
+    ##### 1. CONSTANTS:
     dataset_name_rootdir = {"esd": "/hdd/ESD", "libritts": "LibriTTS_16k"}
     meta_data_dir = "/home/rosen/Project/DrawSpeech_PyTorch/data/dataset/metadata"
     ref_json = {
@@ -333,9 +335,9 @@ if __name__ == "__main__":
         "libritts": os.path.join(meta_data_dir, "libritts16k_cutdur/train.json")}
     #mname_config = lambda config_name: os.path.join("drawspeech/config", config_name)
     mname_config = {
-        "mdit_librittsesd_cutdurspn_pe": "drawspeech/config/mdit_librittsesd_cutdurspn_pe_infer.yaml"
-    }
+        "mdit_librittsesd_cutdurspn_pe": "drawspeech/config/mdit_librittsesd_cutdurspn_pe_infer.yaml"}
     OTHER_CMP_MODELS = ["styletts2", "natrualspeech2"]
+
 
     ##### 2. EXP CONFIG
     mel_config = MelConfig
@@ -360,10 +362,13 @@ if __name__ == "__main__":
 
     ######### 3. INPUT
     # orderd_cmp_modelnames = ["reference", "styletts2", "lddpm_dit_pe_libritts"]
-    orderd_cmp_modelnames = ["reference", "styletts2", "mdit_librittsesd_cutdurspn_pe"]
+    #orderd_cmp_modelnames = ["reference", "styletts2", "mdit_librittsesd_cutdurspn_pe"]
+    orderd_cmp_modelnames = ["reference", "styletts2", "monoDiT"]
+
     dataset_name = "esd"    # libritts esd
     dataset_rootdir = dataset_name_rootdir[dataset_name]   # LibriTTS_16k  ESD
-    eval_models = ["styletts2", "mdit_librittsesd_cutdurspn_pe"]
+    #eval_models = ["styletts2", "mdit_librittsesd_cutdurspn_pe"]
+    eval_models = ["styletts2", "monoDiT"]
 
     # INPUT -> syn_styles (emo, spk, wav_p, psd_code), synTexts, and vis related ()
     #TEST_PART_NUM = 2
@@ -371,7 +376,7 @@ if __name__ == "__main__":
     # eval_models = ["drawspeech_libritts_16k_spk_cutdur", "drawspeech_libritts_mdit_16k_cutdur_phase2"] # ["cfm_dit_self", "cfm_dit_cross_distgl", "cfm_mdit_cross_distgl", "styletts2"]
 
     ######### OUTPUT
-    out_dir = f"/hdd/drawspeech/log/exp/lddpm_{dataset_name}_basic"   # esd
+    out_dir = f"/home/rosen/ckpt/exp/mdit_tts_{dataset_name}"   # esd
     syn_styles = get_synStyle_from_file(args.style, split_char='|', melstyle_type="codec", dataset_name=dataset_name)  # emotion changed
     synTexts = get_synText_from_file(args.txt)
 
@@ -389,8 +394,8 @@ if __name__ == "__main__":
                     cmp_modelnames=eval_models,
                     ref_json=ref_json[dataset_name],
                     out_dir=out_dir,
-                    start_step=0,
-                    end_step=0,
+                    start_step=5,
+                    end_step=6,
                     mel_config=mel_config,
                     vis_attn_config=vis_attn_config[dataset_name],
                     vis_psd_config=vis_psd_config[dataset_name],
@@ -398,10 +403,8 @@ if __name__ == "__main__":
                     save_attn_json_file=True,
                     style_syntex_name="random",
                     infer_json_name="infer.json",
-                    psd_level="phoneme",
-                    save_attn=False,
-                )
-
+                    psd_level="frame",
+                    save_attn=False)
     if EVAL_FINE1:
         out_dir = "/hdd/drawspeech/log/exp/lddpm_basic/fine_lenRate"  #
         style_syn_f_dir = "/home/rosen/Project/StableTTS/exp/data2"

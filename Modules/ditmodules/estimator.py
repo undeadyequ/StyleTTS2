@@ -14,7 +14,8 @@ class DitWrapper(nn.Module):
         super().__init__()
         self.official_dit = official_dit
         if self.official_dit:
-            self.lr = nn.Linear(hidden_channels + time_channels, hidden_channels)
+            self.lr1 = nn.Linear(gin_channels + time_channels, gin_channels)
+            self.conv1 = nn.Conv1d(hidden_channels + hidden_channels, hidden_channels, 1)
         else:
             self.time_fusion = FiLMLayer(hidden_channels, time_channels)
         self.cross_attn = cross_attn
@@ -23,15 +24,16 @@ class DitWrapper(nn.Module):
         else:
             self.block = DiTConVBlock(hidden_channels, filter_channels, num_heads, kernel_size, p_dropout, gin_channels)
             
-    def forward(self, x, c, t, x_mask, seq_style, p_mask, q_f_pos=None, k_f_pos=None):
+    def forward(self, x, c, t, x_mask, seq_style, p_mask, q_f_pos=None, k_f_pos=None, regularize_attn_map=None):
         if self.official_dit:
-            c = self.lr(torch.concat(c, t))
+            c = self.lr1(torch.concat([c, t], dim=1))
         else:
             x = self.time_fusion(x, t) * x_mask
 
         if self.cross_attn:
-            x, attn_map = self.block(x, c, x_mask, seq_style, p_mask, q_f_pos=q_f_pos, k_f_pos=k_f_pos)
+            x, attn_map = self.block(x, c, x_mask, seq_style, p_mask, q_f_pos=q_f_pos, k_f_pos=k_f_pos, regularize_attn_map=regularize_attn_map)
         else:
+            x = self.conv1(torch.concat([x, seq_style], dim=1))
             x = self.block(x, c, x_mask)
             attn_map = None
         return x, attn_map
@@ -86,8 +88,13 @@ class Decoder(nn.Module):
         self.hidden_channels = hidden_channels
         self.out_channels = out_channels
         self.filter_channels = filter_channels
-        self.use_lsc = use_lsc # whether to use unet-like long skip connection
-        self.cross_attn = cross_attn
+
+        if official_dit:
+            self.use_lsc = False
+            self.cross_attn = False
+        else:
+            self.use_lsc = use_lsc # whether to use unet-like long skip connection
+            self.cross_attn = cross_attn
 
         self.time_embeddings = SinusoidalPosEmb(hidden_channels)
         self.time_mlp = TimestepEmbedding(hidden_channels, hidden_channels, filter_channels)
@@ -129,7 +136,7 @@ class Decoder(nn.Module):
             nn.init.constant_(block.block.adaLN_modulation[-1].weight, 0)
             nn.init.constant_(block.block.adaLN_modulation[-1].bias, 0)
 
-    def forward(self, t, x, mask, mu, c, seq_style=None, p_mask=None, return_attn_map=True, q_f_pos=None, k_f_pos=None):
+    def forward(self, t, x, mask, mu, c, seq_style=None, p_mask=None, return_attn_map=True, q_f_pos=None, k_f_pos=None, regularize_attn_map=None):
         """Forward pass of the DiT model.
 
         Args:
@@ -171,8 +178,7 @@ class Decoder(nn.Module):
                     x = self.lsc_layers[idx - self.n_lsc_layers](x)
             ############### Check code #######33
             #print(f"block: {idx}: before block:", torch.mean(torch.abs(x), dim=1))
-            x, attn_map = block(x, c, t, mask, seq_style, p_mask, q_f_pos=q_f_pos, k_f_pos=k_f_pos)
-
+            x, attn_map = block(x, c, t, mask, seq_style, p_mask, q_f_pos=q_f_pos, k_f_pos=k_f_pos, regularize_attn_map=regularize_attn_map)
             attn_maps.append(attn_map)
         output = self.final_proj(x * mask)
         if attn_maps[0] is not None:

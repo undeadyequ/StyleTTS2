@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.functional import dropout
+
 from utilities.vis import save_plot
 import math
 from Modules.ditmodules.positionEmbedder import PhoneRotaryPositionalEmbeddings, RotaryPositionalEmbeddings
@@ -63,9 +65,14 @@ class MultiHeadAttentionCross(nn.Module):
             query = self.query_rotary_pe(query)  # [b, n_head, t, c // n_head]
             key = self.key_rotary_pe(key)
 
-        output, attn_map = scaled_dot_product_attention(
-            query, key, value, attn_mask=mask,
-            dropout_p=self.p_dropout if self.training else 0)  # attn: [b, n_h, t_t, t_s]
+        if self.training:
+            dropout_p = self.p_dropout
+            attn_mask_operation = "add"
+        else:
+            dropout_p = 0
+            attn_mask_operation = "multiply"  # to add conditioning attn_mask
+
+        output, attn_map = scaled_dot_product_attention(query, key, value, attn_mask=mask, dropout_p=dropout_p, attn_mask_operation=attn_mask_operation)  # attn: [b, n_h, t_t, t_s]
 
         output = output.transpose(2, 3).contiguous().view(b, d, t_t)  # [b, n_h, t_t, d_k] -> [b, d, t_t]
         return output, attn_map
@@ -293,7 +300,7 @@ class Transpose(nn.Identity):
 
 
 def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None,
-                                 enable_gqa=False) -> torch.Tensor:
+                                 enable_gqa=False, attn_mask_operation="add") -> torch.Tensor:
     L, S = query.size(-2), key.size(-2)
     scale_factor = 1 / math.sqrt(query.size(-1)) if scale is None else scale
     attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
@@ -329,7 +336,15 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
     #attn_weight[:, :, tgt_enh_start:tgt_enh_start + tgt_enh_dur, ref_enh_start:ref_enh_start + ref_enh_dur] = 100
     #attn_weight = attn_weight * guide_matrix_mask
 
-    attn_weight += attn_bias
+    if attn_mask_operation == "add":
+        attn_weight += attn_bias
+    elif attn_mask_operation == "multiply":
+        attn_weight *= attn_bias
+    else:
+        raise IOError(f"{attn_mask_operation} not supported")
+    #save_plot(attn_weight[0, 0].detach().cpu(), f"attn_before_monoMask.png")
+    #attn_weight += attn_bias           ################# CHECK  : attn_weight += attn_bias
+    #save_plot(attn_weight[0, 0].detach().cpu(), f"attn_after_monoMask.png")
     attn_weight = torch.softmax(attn_weight, dim=-1)
 
     attn_weight = torch.dropout(attn_weight, dropout_p, train=True)

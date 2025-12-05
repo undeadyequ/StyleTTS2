@@ -13,17 +13,22 @@ def make_guided_attention_masks(ilens, olens, chunksize, sigma=0.4):
     return guided_attn_masks
 
 def make_guided_attention_masks2(ilens, olens, max_len=None, base_sigma=0.2, eps=1e-5):
+    """
+    out: (b, max(ilens), max(olens))
+    """
     n_batches = len(ilens)
     if max_len is None:
         max_ilen = int(max(ilens))
         max_olen = int(max(olens))
+        max_len = max(max_ilen, max_olen)
     else:
         max_ilen = max_olen = max_len
     guided_attn_masks = torch.zeros((n_batches, max_ilen, max_olen)).cuda()
     for idx, (ilen, olen) in enumerate(zip(ilens, olens)):
         ilen = int(ilen)
         olen = int(olen)
-        guided_attn_masks[idx, :ilen, :olen] = make_gaussian_mask(ilen, olen, base_sigma, max_len, eps)
+        if base_sigma > 0:
+            guided_attn_masks[idx, :ilen, :olen] = make_gaussian_mask(ilen, olen, base_sigma, max_len, eps)
     return guided_attn_masks
 
 def make_gaussian_mask(T, S, base_sigma=0.2, ref_len=200, eps=1e-5):

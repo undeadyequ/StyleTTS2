@@ -8,7 +8,7 @@ import time
 from dataclasses import asdict
 import argparse
 from exp.mel_config import MelConfig          ################ BE CAREFUL; Must same with draw?.yaml #########
-from drawspeech.utilities.audio.audio_for_eval import LogMelSpectrogram, load_and_resample_audio, PitEngExtractor, load_audio
+from utilities.audio.audio_for_eval import LogMelSpectrogram, load_and_resample_audio, PitEngExtractor, load_audio
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -49,7 +49,6 @@ def extract_psd(mel_config, out_speech_dir, model_n="unkown", save_psd_file="", 
         except IOError:
             pitch, energy = torch.zeros(1), torch.zeros(1)
             print("{} is failed to extract psd".format(speech_f))
-
         prosody_dict[spk][emo_id][model_n]["pitch"].append(pitch.tolist())
         prosody_dict[spk][emo_id][model_n]["energy"].append(energy.tolist())
         prosody_dict[spk][emo_id][model_n]["speechid"].append(speech.split(".")[0])
@@ -101,14 +100,12 @@ def extract_psdave(mel_config, cmp_modelnames, out_dir=None):
                     "pitch": [],
                     "energy": [],
                     "duration": [],
-                    "speechid": []
-                }
+                    "speechid": []}
             tg_path = os.path.join(out_mfa_dir, "{}.TextGrid".format(os.path.basename(speech_f).split(".")[0]))
             try:
                 phonemes, pitch, energy, mels, duration = preprocessor.extract_pitch_energy_mel(speech_f, tg_path=tg_path, out_dir=out_psd_dir, average_phoneme=True, save_npy=False)
             except IOError:
                 print("{} is failed to extract psd".format(speech_f))
-
             prosody_dict[spk][emo_id][model_n]["phonemes"].append(phonemes.split(" "))
             prosody_dict[spk][emo_id][model_n]["pitch"].append(pitch.tolist())
             prosody_dict[spk][emo_id][model_n]["energy"].append(energy.tolist())

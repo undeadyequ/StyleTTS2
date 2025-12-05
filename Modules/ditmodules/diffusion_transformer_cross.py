@@ -69,7 +69,7 @@ class DiTConVBlockCross(nn.Module):
         )
         """
 
-    def forward(self, x, c, x_mask, r, p_mask, q_f_pos=None, k_f_pos=None):
+    def forward(self, x, c, x_mask, r, p_mask, q_f_pos=None, k_f_pos=None, regularize_attn_map=None):
         """
         Args:
             x : [batch_size, channel, time]
@@ -83,6 +83,10 @@ class DiTConVBlockCross(nn.Module):
         attn_mask = x_mask.unsqueeze(1) * x_mask.unsqueeze(-1)  # shape: [batch_size, 1, time, time]
         attn_mask = torch.zeros_like(attn_mask).masked_fill(attn_mask == 0, -torch.finfo(x.dtype).max)
 
+        #if regularize_attn_map is not None:
+        #    #save_plot(attn_mask[0, 0, ...].detach().cpu(), f"attn_origin_mask.png")
+        #    attn_mask = attn_mask + regularize_attn_map
+
         # ref and x may be different
         if r is not None:
             """
@@ -94,10 +98,14 @@ class DiTConVBlockCross(nn.Module):
             """
             attn_cross_mask = p_mask.unsqueeze(1) * x_mask.unsqueeze(-1)  # shape: [batch_size, 1, time, time]
             attn_cross_mask = torch.zeros_like(attn_cross_mask).masked_fill(attn_cross_mask == 0, -torch.finfo(x.dtype).max)
+            if regularize_attn_map is not None:   ########## CHECK AGAIN
+                attn_cross_mask = attn_cross_mask + regularize_attn_map
         if self.adaln == 9:
-            shift_msa, scale_msa, gate_msa, shift_mca, scale_mca, gate_mca, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).unsqueeze(2).chunk(9, dim=1)  # shape: [batch_size, channel, 1]
+            shift_msa, scale_msa, gate_msa, shift_mca, scale_mca, gate_mca, shift_mlp, scale_mlp, gate_mlp = (
+                self.adaLN_modulation(c).unsqueeze(2).chunk(9, dim=1))  # shape: [batch_size, channel, 1]
         else:
-            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).unsqueeze(2).chunk(6, dim=1)  #########TEMP shape: [batch_size, channel, 1]
+            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
+                self.adaLN_modulation(c).unsqueeze(2).chunk(6, dim=1))  #########TEMP shape: [batch_size, channel, 1]
 
         # selfAttn
         x = self.modulate(self.norm1(x.transpose(1, 2)).transpose(1, 2), shift_msa, scale_msa)

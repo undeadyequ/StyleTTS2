@@ -5,6 +5,8 @@ import numpy as np
 
 seed = 42
 torch.manual_seed(seed)
+print(torch.randn(1, 5))
+print(torch.randn(1, 5))
 torch.cuda.manual_seed_all(seed)
 np.random.seed(seed)
 random.seed(seed)
@@ -34,3 +36,5 @@ print(f"Average UTMOS-v2 score: {mean_mos:.4f}")
 #
 # Average UTMOS-v2: 2.9714 ± 0.4110
 # Files evaluated: 250
+
+

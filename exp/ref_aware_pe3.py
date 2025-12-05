@@ -73,7 +73,7 @@ def fuse_prosody_smooth_additive(
 ):
     """
     Strategy 2:
-    - Smooth voiced/unvoiced transition.
+    - Smooth voiced/unvoiced transition in voice mask.
     - Add normalized voiced reference bias to predicted F0.
     - Clean and smooth reference before normalization.
     """

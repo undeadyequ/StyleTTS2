@@ -17,18 +17,106 @@ from pathlib import Path
 import torch
 from const_param import emo_melstyleSpk_dict, config_dir, logs_dir, melstyle_dir, wav_dir, wav_dict, emo_num_dict, logs_dir_par, psd_quants_dir
 import shutil
-from utils import parse_filelist, intersperse, get_emo_label
+from exp_utils2 import parse_filelist, intersperse, get_emo_label
+import pandas as pd
+from utils import maximum_path, mask_from_lens, length_to_mask
+
 
 ##################### Operate file ##################
-def convert_style2json(style_id):
-    pass
+
+def convert_json_to_pd2(json_data, custom_order=None, need_multi_index=True, need_print_latex=True):
+    """
+    {"hyper":
+        "model": [value1, value2]}
+    """
+    rows = []
+    for hyper, model_values in json_data.items():
+        for model, values in model_values.items():
+            # pad or trim to two values if needed
+            value1, value2 = (values + [None, None])[:2]
+            rows.append({
+                "model": model,
+                "emotion": hyper,
+                "pitch": value1,
+                "energy": value2})
+    # ---- Convert to DataFrame ----
+    df = pd.DataFrame(rows)[["model", "emotion", "pitch", "energy"]]
+
+    if custom_order is not None:
+        df["model"] = pd.Categorical(df["model"], categories=custom_order, ordered=True)
+        df = df.sort_values(["model", "emotion"]).reset_index(drop=True)
+
+
+    # compute average
+    avg_per_model = (
+        df.groupby("model")[["pitch", "energy"]]
+        .mean()
+        .round(2)
+    )
+
+    # multi-index column
+    if need_multi_index:
+        df_wide = df.pivot(index='model', columns='emotion', values=['pitch', 'energy'])
+        emotion_order = ['Angry', 'Neutral', 'Sad', 'Happy', 'Surprise']
+
+        # reorder both levels
+        df_wide = (
+            df_wide
+            .swaplevel(0, 1, axis=1)  # emotion → first level
+            .reindex(columns=pd.MultiIndex.from_product(
+                [emotion_order, ['pitch', 'energy']]
+            ))  # enforce pitch first
+        )
+        """        
+        df_wide = df_wide.reindex(columns=pd.MultiIndex.from_product(
+            [['pitch', 'energy'], emotion_order]
+        )).swaplevel(0, 1, axis=1)
+        """
+        df = df_wide.round(2)
+
+    if need_print_latex:
+        df_marked = df.copy()
+        PRINT_BEST = True
+        if PRINT_BEST:
+            for col in df.columns:
+                # get sorted unique values (descending = best first)
+                sorted_vals = df[col].sort_values(ascending=True).unique()
+                best = sorted_vals[0]
+                second = sorted_vals[1] if len(sorted_vals) > 1 else None
+                # apply formatting
+                df_marked[col] = df[col].apply(
+                    lambda x:
+                    f"\\first{{{x}}}" if x == best else
+                    (f"\\second{{{x}}}" if second is not None and x == second else f"{x}")
+            )
+        for idx, row in df_marked.iterrows():
+            print(f"{idx} & " + " & ".join(row.astype(str)) + r" \\")
+    return df, avg_per_model
+
+
+def convert_json_to_pd(json_data):
+    rows = []
+    for model, hypers in json_data.items():
+        for hyper, subhypers in hypers.items():
+            for subhyper, values in subhypers.items():
+                # pad or trim to two values if needed
+                value1, value2 = (values + [None, None])[:2]
+                rows.append({
+                    "model": model,
+                    "hyper": hyper,
+                    "subhyper": subhyper,
+                    "value1": value1,
+                    "value2": value2})
+    # ---- Convert to DataFrame ----
+    df = pd.DataFrame(rows)
+    return df
 
 
 def combine_jsons(attn_model1_json, attn_model2_json, combined_model12_json):
     """
     combine two jsons
     Args:
-        attn_model1_json (_type_): _description_
+        attn_model1_json (_type_): {"spk": {"emo": {"A/B": {"ids/qkdurs/qkphones":... }}}}
         attn_model2_json (_type_): _description_
         combined_model12_json (_type_): _description_
     """
@@ -36,17 +124,23 @@ def combine_jsons(attn_model1_json, attn_model2_json, combined_model12_json):
         attn_model1 = json.load(f)
     with open(attn_model2_json, 'r') as f:
         attn_model2 = json.load(f)
-    
+
+    combined_dict = combine_two_jsons(attn_model1, attn_model2)
+
+    with open(combined_model12_json, 'w') as f:
+        json.dump(combined_dict, f, indent=4)
+
+def combine_two_jsons(attn_model1, attn_model2):
+    """
+    attn_model1: {"spk": {"emo": {"A/B": {"ids/qkdurs/qkphones":... }}}}
+    """
     combined_dict = attn_model1.copy()
-    
-    for spk, emo_model_dict in attn_model2.items():    
-        for emo, model_dict in emo_model_dict.items(): 
+    for spk, emo_model_dict in attn_model2.items():
+        for emo, model_dict in emo_model_dict.items():
             for model, psd_dict in model_dict.items():
                 if model not in combined_dict[spk][emo].keys():
                     combined_dict[spk][emo][model] = attn_model2[spk][emo][model]
-    
-    with open(combined_model12_json, 'w') as f:
-        json.dump(combined_dict, f, indent=4)
+    return combined_dict
 
 
 def renew_dict(current_dict, old_dict):
@@ -151,7 +245,7 @@ def get_synStyle_from_file(synStyle_f,
         elif dataset_name == "libritts":
             for speech_path, txt in syn_styles:
                 # search emotion index
-                spk = speech_path.split("/")[4]
+                spk = speech_path.split("/")[6]
                 emo = "Neutral"
                 styles.append((spk, emo, txt, speech_path))
     return styles
@@ -200,6 +294,16 @@ def copy_ref_speech(src_wavs, src_txts, dst_wavs, dst_txts):
         with open(dst_txt, "w") as file1:
             # Writing data to a file
             file1.write(src_txt)
+
+def copy_reference_speech(syn_styles, ref_dir):
+    # copy reference
+    ref_texts = []
+    for i, ref_s in enumerate(syn_styles):
+        spk, emo, ref_txt, speech_path = ref_s
+        ref_texts.append(ref_txt) if ref_txt not in ref_texts else ref_texts
+        r_id = ref_texts.index(ref_txt)
+        r_wav_f = f'spk{spk}_{emo}_ref{r_id}.wav'
+        shutil.copy(speech_path, os.path.join(ref_dir, r_wav_f))
 
 def get_pitch_match_score(pitch1, pitch2):
     pitch_score = 0
@@ -354,6 +458,54 @@ def pad_a2b_left(a, b_length):
     a_new[:pad_end] = a[:pad_end]
     a_new[pad_end:] = a
     return a_new
+
+
+def save_attn_dict(attn_dict, nested_keys, values):
+    spk, emo, model_n = nested_keys
+    speechid, syn_phonemes, ref_phonemes, q_dur, k_dur = values
+    spk = "spk" + str(spk)
+    if spk not in attn_dict.keys():
+        attn_dict[spk] = dict()
+    if emo not in attn_dict[spk].keys():
+        attn_dict[spk][emo] = dict()
+    if model_n not in attn_dict[spk][emo].keys():
+        attn_dict[spk][emo][model_n] = {"speechid": [], "syn_phonemes": [], "ref_phonemes": [], "q_dur": [], "k_dur": []}
+    attn_dict[spk][emo][model_n]["speechid"].append(speechid)
+    attn_dict[spk][emo][model_n]["syn_phonemes"].append(syn_phonemes)
+    attn_dict[spk][emo][model_n]["ref_phonemes"].append(ref_phonemes)
+    attn_dict[spk][emo][model_n]["q_dur"].append(q_dur)
+    attn_dict[spk][emo][model_n]["k_dur"].append(k_dur)
+    return attn_dict
+
+
+def save_psdcond(psdcond_dict, nested_keys, values):
+    spk, emo, model_n = nested_keys
+    speechid, pitch_cond, energy_cond = values
+    spk = "spk" + str(spk)
+    if spk not in psdcond_dict.keys():
+        psdcond_dict[spk] = dict()
+    if emo not in psdcond_dict[spk].keys():
+        psdcond_dict[spk][emo] = dict()
+    if model_n not in psdcond_dict[spk][emo].keys():
+        psdcond_dict[spk][emo][model_n] = {"speechid": [], "pitch_cond": [], "energy_cond": []}
+    psdcond_dict[spk][emo][model_n]["speechid"].append(speechid)
+    psdcond_dict[spk][emo][model_n]["pitch_cond"].append(pitch_cond)
+    psdcond_dict[spk][emo][model_n]["energy_cond"].append(energy_cond)
+    return psdcond_dict
+
+def extract_k_dur(ref_mel, ref_phone_tokens, second_model, device="cuda"):
+    # calcuate dur of referece speech
+    ref_mel_len = torch.tensor([ref_mel.size(-1)]).to(device)
+    ref_mel_mask = length_to_mask(ref_mel_len // 2).to(device)
+    _, _, s2s_attn = second_model.text_aligner(ref_mel, ref_mel_mask, ref_phone_tokens)
+    s2s_attn = s2s_attn.transpose(-1, -2)
+    s2s_attn = s2s_attn[..., 1:]
+    s2s_attn = s2s_attn.transpose(-1, -2)
+    phoneme_len = torch.tensor([ref_mel.size(-1)]).to(device)
+    mask_ST = mask_from_lens(s2s_attn, phoneme_len, ref_mel_len)
+    s2s_attn_mono = maximum_path(s2s_attn, mask_ST)
+    k_dur = s2s_attn_mono.squeeze().sum(-1)
+    return k_dur
 
 
 if __name__ == '__main__':

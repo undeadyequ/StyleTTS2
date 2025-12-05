@@ -1,18 +1,18 @@
 ## Do not joint training Style encoder
 
-log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v10"   # CHANGE
+log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v11"   # CHANGE
 first_stage_path: "first_stage.pth"
 data_ratio: 1
 save_freq: 2
 log_interval: 10
 device: "cuda"
 epochs_1st: 50 # number of epochs for first stage training (pre-training)
-epochs_2nd: 80 # number of peochs for second stage training (joint training)
+epochs_2nd: 50 # number of peochs for second stage training (joint training)
 batch_size: 16  # 1st: 32, 2nd: 16
 max_len: 600 # maximum number of frames 600
 #pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm/epoch_2nd_00014.pth"
-pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v10/epoch_2nd_00064.pth"
-second_stage_load_pretrained: true # set to true if the pre-trained model is for 2nd stage
+pretrained_model: ""
+second_stage_load_pretrained: false # set to true if the pre-trained model is for 2nd stage
 load_only_params: false # set to true if do not want to load epoch numbers and optimizer parameters
 
 F0_path: "Utils/JDC/bst.t7"
@@ -37,7 +37,7 @@ preprocess_params:
 
 model_params:
   multispeaker: true
-  learn_monoAttn: false
+  learn_monoAttn: true
 
   dim_in: 64 
   hidden_dim: 512

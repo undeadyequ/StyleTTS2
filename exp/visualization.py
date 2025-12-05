@@ -1,6 +1,6 @@
 from cProfile import label
 from typing import Any, Dict, Optional
-from exp.exp_utils_bk import convert_xydur_xybox, clean_phone
+from exp.exp_utils import convert_xydur_xybox, clean_phone
 from exp.syllable import extend_phone2syl
 import matplotlib.pyplot as plt
 import numpy as np
@@ -62,7 +62,7 @@ def vis_mono_guide_mask(images, out_png):
         "img_L200_d03.png", "img_L200_d05.png", "img_L200_d08.png"
     ]
     """
-    # Labels
+    # INPUT
     row_labels = ["L=100", "L=200"]
     col_labels = [r"$\delta=0.3$", r"$\delta=0.5$", r"$\delta=0.8$"]
 
@@ -85,12 +85,104 @@ def vis_mono_guide_mask(images, out_png):
     for ax, col in zip(axes[1], col_labels):
         ax.set_xlabel(col, fontsize=14, weight="bold")
 
-
-
     # Save in academic quality
     #plt.savefig("arranged_grid_academic.png", dpi=600, bbox_inches="tight")
     plt.savefig(out_png, bbox_inches="tight")
 
+
+def vis_matrix_attn(matrix, attns, out_png):
+    """
+    images = [
+        "img_L100_d03.png", "img_L100_d05.png", "img_L100_d08.png",
+        "img_L200_d03.png", "img_L200_d05.png", "img_L200_d08.png"
+    ]
+    """
+    # INPUT
+    row_labels = ["Mono-guidance \nmatrix", "Cross-attention \nmap"]
+    col_labels = [r"$\delta=0.2$", r"$\delta=0.5$", r"$\delta=0.8$", r"$\delta=\varnothing$"]
+
+    # Academic style figure
+    fig, axes = plt.subplots(2, 4, figsize=(9, 5))
+    # Adjust spacing: no vertical/horizontal gap
+    #plt.subplots_adjust(wspace=0.1, hspace=0.4)
+
+    for (i, j), ax in np.ndenumerate(axes):
+        if i == 0:
+            ax.imshow(matrix[j])
+        else:
+            ax.imshow(attns[j])
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    # Row labels (aligned on the left)
+    for ax, row in zip(axes[:, 0], row_labels):
+        ax.set_ylabel(row, fontsize=12, rotation=90, labelpad=12)
+
+    # Column labels (centered below)
+    for ax, col in zip(axes[0, :], col_labels):
+        ax.set_title(col, fontsize=14, weight="bold")
+
+    # Save in academic quality
+    #plt.savefig("arranged_grid_academic.png", dpi=600, bbox_inches="tight")
+    fig.savefig(out_png, bbox_inches="tight")
+
+def vis_matrix_attn2(matrix, attns, out_png):
+    # ---------------------------
+    # Global academic style
+    # ---------------------------
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.size": 11,
+        "axes.titlesize": 13,
+        "axes.labelsize": 12,
+        "text.usetex": False,              # Keep LaTeX-like math, but no full TeX compile
+        "mathtext.fontset": "stix",        # Academic math font
+        "figure.dpi": 300,
+        "axes.linewidth": 0.6
+    })
+
+    # Row and column labels
+    row_labels = [
+        "Mono-guidance\nmatrix",
+        "Cross-attention\nmap"
+    ]
+    col_labels = [
+        r"$\delta = 0.2$",
+        r"$\delta = 0.5$",
+        r"$\delta = 0.8$",
+        r"$\delta = \varnothing$"
+    ]
+
+    # Create figure (slightly wider to breathe)
+    fig, axes = plt.subplots(2, 4, figsize=(9.2, 4.6))
+    fig.subplots_adjust(wspace=0.15, hspace=0.25)
+
+    # Plot each subplot
+    for (i, j), ax in np.ndenumerate(axes):
+        img = matrix[j] if i == 0 else attns[j]
+        ax.imshow(img, cmap="viridis", aspect="auto", origin="lower")
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        # Thicker frame for clarity
+        for spine in ax.spines.values():
+            spine.set_linewidth(0.6)
+
+    # ---------------------------
+    # Row labels (left side)
+    # ---------------------------
+    for ax, label in zip(axes[:, 0], row_labels):
+        ax.set_ylabel(label, fontsize=12, rotation=90, labelpad=12)
+
+    # ---------------------------
+    # Column labels (top)
+    # ---------------------------
+    for ax, label in zip(axes[0, :], col_labels):
+        ax.set_title(label, fontsize=13, fontweight="bold", pad=10)
+
+    # Save with publication quality
+    fig.savefig(out_png, dpi=600, bbox_inches="tight")
+    plt.close(fig)
 
 def vis_psd(pitch_dict_for_vis, energy_dict_for_vis, out_png, txt_id, show_ref_phone_on_line=True, ordered_lengend=("reference", "ddpm_dit_cross", "ddpm_mdit_cross")):
     rc_num = (3, 2)
