@@ -1,5 +1,8 @@
 import shutil
 import sys, os, yaml, json
+
+from exp.exp_utils import convert_json_to_pd2_fine
+
 sys.path.append('/home/rosen/Project/StyleTTS2')
 os.chdir('/home/rosen/Project/StyleTTS2')
 
@@ -13,9 +16,9 @@ from typing import Any, Dict, Optional, List, Tuple, Literal
 from exp_utils import (copy_ref_speech, copy_reference_speech, fine_adjust_configs, get_synStyle_from_file,
                        get_synText_from_file, renew_dict, combine_jsons, convert_json_to_pd, convert_json_to_pd2)
 from vis_data_adaptor import convert_vis_psd_json, convert_attn_json, convert_attnEnh_json
-from extract_psd import extract_psdave, extract_psd_fine_class, extract_psd
+from extract_psd import extract_psdave, extract_psd_fine_class2, extract_psd
 from exp.visualization import vis_psd, vis_emo_crossAttn, vis_psd_enh, show_attn_map, show_two_attn_map, vis_mono_guide_mask, vis_dual_utmos_rmse
-from exp.statcz_psd import statcz_psd_mcd, statcz_psd_fine_mcd
+from exp.statcz_psd import statcz_psd_mcd, statcz_psd_fine_mcd, statcz_psd_mcd_fine_class2
 
 from vis_data_adaptor import adapt_mix_2d_r_m1_m2, adapt_attn_2d_block_model
 from vis2 import cst_attn_2d_block_model, cst_melattn_2d_type_model
@@ -35,6 +38,8 @@ model_meta = {
         "hierspeech": ["", ""],
         "DiT": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_dit_v1/epoch_2nd_00048.pth", "first_txt2mel_cfm_dit_v1/config_libritts_txt2mel_cfm_dit_v1.yml"],
         "monoDiT": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
+        #"monoDiT": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v12/epoch_2nd_00048.pth", "first_txt2mel_cfm_v12/config_libritts_txt2mel_cfm_v12.yml"],
+
         "monoDiT_ab0808_m08_fb03": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
         "monoDiT_ab0307_m08_fb03": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
         "monoDiT_ab0808_m08_fbnone": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"]
@@ -115,13 +120,16 @@ model_infer_config = {
 def main_ablation(
         syn_styles: List[Tuple[Any, Any, Any, Any, Any, Any]],
         synTexts: List[str],
+        start_step: int,
+        end_step: int,
         out_dir: str = "option",  # middle result
         ref_dir: str = "ref",
         mix_ref_pe_types = ["none"],
         mono_guide_deltas = [0.2, 0.5, 0.8],
         fuse_strength_gammas = [0.2, 0.4, 0.6],
         save_attn_json_file = False,
-        save_cond = False
+        save_cond = False,
+        psd_level = "frame"
 ):
     # IN: ckpt, config, inf_args, hyper
     root_dir, ckpt, model_configs = model_meta["monoDiT"]
@@ -130,23 +138,23 @@ def main_ablation(
     ## OUT (wav): out_dir, attn_dir, ref_dir attn_json_path
     attn_json_path = os.path.join(out_dir, "attn_mdit_random.json")  # only needed in random synthesis
     psdcond_json_path = os.path.join(out_dir, "psdcond_mdit_random.json")  # only needed in random synthesis
-
     out_speech_dir = os.path.join(out_dir, "monoDiT_ablation")  # out_dir/model_name/[random/CondA/CondB]]/...
-    """
-    attn_dict, psdcond_dict = inference_monoDiT(ckpt, model_configs, synTexts, syn_styles, out_speech_dir,
-                                  model_infer_config["monoDiT"], mix_ref_pe_types=mix_ref_pe_types,
-                                  mono_guide_deltas=mono_guide_deltas, fuse_strength_gammas=fuse_strength_gammas,
-                                  save_attn=save_attn_json_file, save_cond=save_cond)
-    if save_attn_json_file and len(attn_dict) != 0:
-        with open(attn_json_path, "w", encoding="utf-8") as f:
-            f.write(json.dumps(attn_dict, sort_keys=True, indent=4))
-    if save_cond:
-        with open(psdcond_json_path, "w", encoding="utf-8") as f:
-            f.write(json.dumps(psdcond_dict, sort_keys=True, indent=4))
-    """
-    # OUT (psd): get ori_psd, stats_psd, stats_psd_meanSpk
+
+    # Synthesis speech
+    if start_step <= 0 <= end_step:
+        attn_dict, psdcond_dict = inference_monoDiT(ckpt, model_configs, synTexts, syn_styles, out_speech_dir,
+                                      model_infer_config["monoDiT"], mix_ref_pe_types=mix_ref_pe_types,
+                                      mono_guide_deltas=mono_guide_deltas, fuse_strength_gammas=fuse_strength_gammas,
+                                      save_attn=save_attn_json_file, save_cond=save_cond)
+
+        if save_attn_json_file and len(attn_dict) != 0:
+            with open(attn_json_path, "w", encoding="utf-8") as f:
+                f.write(json.dumps(attn_dict, sort_keys=True, indent=4))
+        if save_cond:
+            with open(psdcond_json_path, "w", encoding="utf-8") as f:
+                f.write(json.dumps(psdcond_dict, sort_keys=True, indent=4))
+
     prosody_dict = {}
-    psd_json_path = os.path.join(out_dir, "psd_ablation.json")
     psd_statics_json = os.path.join(out_dir, f"stats_psd_ablation.json")
     psd_statics_mean_json = os.path.join(out_dir, f"stats_psd_ablation_mean.json")
 
@@ -154,56 +162,66 @@ def main_ablation(
     statsave_psd = os.path.join(out_dir, "statsIntp_psd_mulitindex_ablation.csv")
     statsave_psd_mean = os.path.join(out_dir, "statsIntp_psd_mulitindex_meanModel_ablation.csv")
     wer_utmos_json_path = os.path.join(out_dir, "wer_utmos_ablatoin.json")
-    print("Start extract frame level pitch/energy from {} dir".format(out_speech_dir))
 
-    if not os.path.isdir(ref_speech_dir):
-        Path(ref_speech_dir).mkdir(exist_ok=True, parents=True)
-    copy_reference_speech(syn_styles, ref_dir)
+    # Extract psd and compute stats
+    if start_step <= 1 <= end_step:
+        print("Start extract frame level pitch/energy from {} dir".format(out_speech_dir))
+        if not os.path.isdir(ref_speech_dir):
+            Path(ref_speech_dir).mkdir(exist_ok=True, parents=True)
+        copy_reference_speech(syn_styles, ref_dir)
 
-    # extract psd
-    for i, ablation_name in enumerate(os.listdir(out_speech_dir)):
-        if i == 0:
-            prosody_dict = extract_psd(mel_config, ref_dir, model_n="reference", save_psd_file="", prosody_dict=prosody_dict)
-        out_speech_ablation_dir = os.path.join(out_speech_dir, ablation_name)
-        if not os.path.isdir(out_speech_ablation_dir):
-            continue
-        prosody_dict = extract_psd(mel_config, out_speech_ablation_dir, model_n=ablation_name, save_psd_file="",
-                                   prosody_dict=prosody_dict)  # {"spk": {"emo": {"A/B/R": {"ids/dur/phones/psd":...}}}}
-    with open(psd_json_path, "w", encoding="utf-8") as f:
-        f.write(json.dumps(prosody_dict, sort_keys=True, indent=4))
-
-    # stats psd
-    with open(psd_json_path, "r") as f:
-        prosody_dict = json.load(f)
-    psd_ctw_res, psd_mcd_stat_res, psd_mean_stat_res = statcz_psd_mcd(prosody_dict, exclude_zero=True)  # {"spk": {"ang": {"modelA": [p1, e1, m1]}, "happy":{ "modelB": []]}}}
-    with open(psd_statics_json, "w", encoding="utf-8") as f:
-        f.write(json.dumps(psd_mcd_stat_res, sort_keys=True, indent=4))
-    with open(psd_statics_mean_json, "w", encoding="utf-8") as f:
-        f.write(json.dumps(psd_mean_stat_res, sort_keys=True, indent=4))
-
-    # paper related output format
-    psd_mean_stat_res_pd, mean_df = convert_json_to_pd2(psd_mean_stat_res)  # model     hyper     pitch    energy
-    psd_mean_stat_res_pd.to_csv(statsave_psd, index=True)
-    mean_df.to_csv(statsave_psd_mean, index=True)
-    print(psd_mean_stat_res_pd)
-
-    NEED_WER = False
-    wer_utmos2_dict = {}
-    for i, ablation_name in enumerate(os.listdir(out_speech_dir)):
-        out_speech_ablation_dir = os.path.join(out_speech_dir, ablation_name)  # out_dir/model_name/[random/CondA/CondB]]/...
-        if not os.path.isdir(out_speech_ablation_dir) or out_speech_ablation_dir.endswith("_attn"):
-            continue
-        if NEED_WER:
-            wer, sub, dele, ins = evaluate_wer(out_speech_ablation_dir, output_csv=f"{out_speech_dir}/wer_{ablation_name}.csv")
+        # extract psd
+        if psd_level == "frame":
+            psd_json_path = os.path.join(out_dir, "psd_ablation.json")   # OUT
+            for i, ablation_name in enumerate(os.listdir(out_speech_dir)):
+                if i == 0:
+                    prosody_dict = extract_psd(mel_config, ref_dir, model_n="reference", save_psd_file="", prosody_dict=prosody_dict)
+                out_speech_ablation_dir = os.path.join(out_speech_dir, ablation_name)
+                if not os.path.isdir(out_speech_ablation_dir):
+                    continue
+                prosody_dict = extract_psd(mel_config, out_speech_ablation_dir, model_n=ablation_name, save_psd_file="",
+                                           prosody_dict=prosody_dict)  # {"spk": {"emo": {"A/B/R": {"ids/dur/phones/psd":...}}}}
+            with open(psd_json_path, "w", encoding="utf-8") as f:
+                f.write(json.dumps(prosody_dict, sort_keys=True, indent=4))
+        elif psd_level == "phoneme":   ######## NOT USED currently
+            psd_json_path = os.path.join(out_dir, "psdave_ablation.json") # OUT
+            cmp_modelnames = [ablation_name for ablation_name in os.listdir(out_speech_dir) if not ablation_name.endswith("attn")]
+            prosody_psdave_dict = extract_psdave(mel_config, cmp_modelnames, out_dir)  # {"spk": {"emo": {"A/B/R": {"ids/dur/phones/psd":...}}}}
+            with open(psd_json_path, "w", encoding="utf-8") as f:
+                f.write(json.dumps(prosody_psdave_dict, sort_keys=True, indent=4))
         else:
-            wer, sub, dele, ins = 0, 0, 0, 0
-        mean_mos, std_mos, mos_list = run_utmos(out_speech_ablation_dir, 1, output_file=f"{out_speech_dir}/utmos_{ablation_name}.txt")
-        wer_utmos2_dict[ablation_name] = [wer, mean_mos]
-        print(f"wer/sub/dele/ins of {ablation_name} are: {wer}, {sub}, {dele}, {ins}")
-        print(f"{ablation_name} UTMOS-v2: {mean_mos:.4f} ± {std_mos:.4f}")
-    with open(wer_utmos_json_path, "w", encoding="utf-8") as f:
-        f.write(json.dumps(wer_utmos2_dict, sort_keys=True, indent=4))
-    print(wer_utmos2_dict)
+            raise IOError("psd level error!")
+
+        # stats psd
+        with open(psd_json_path, "r") as f:
+            prosody_dict = json.load(f)
+        psd_ctw_res, psd_mcd_stat_res, psd_mean_stat_res = statcz_psd_mcd(prosody_dict, exclude_zero=True)  # {"spk": {"ang": {"modelA": [p1, e1, m1]}, "happy":{ "modelB": []]}}}
+        with open(psd_statics_json, "w", encoding="utf-8") as f:
+            f.write(json.dumps(psd_mcd_stat_res, sort_keys=True, indent=4))
+        with open(psd_statics_mean_json, "w", encoding="utf-8") as f:
+            f.write(json.dumps(psd_mean_stat_res, sort_keys=True, indent=4))
+
+        # paper related output format
+        psd_mean_stat_res_pd, mean_df = convert_json_to_pd2(psd_mean_stat_res)  # model     hyper     pitch    energy
+        psd_mean_stat_res_pd.to_csv(statsave_psd, index=True)
+        mean_df.to_csv(statsave_psd_mean, index=True)
+        print(psd_mean_stat_res_pd)
+
+    # Wer computing
+    if start_step <= 2 <= end_step:
+        wer_utmos2_dict = {}
+        for i, ablation_name in enumerate(os.listdir(out_speech_dir)):
+            out_speech_ablation_dir = os.path.join(out_speech_dir, ablation_name)  # out_dir/model_name/[random/CondA/CondB]]/...
+            if not os.path.isdir(out_speech_ablation_dir) or out_speech_ablation_dir.endswith("_attn"):
+                continue
+            wer, sub, dele, ins = evaluate_wer(out_speech_ablation_dir, output_csv=f"{out_speech_dir}/wer_{ablation_name}.csv")
+            mean_mos, std_mos, mos_list = run_utmos(out_speech_ablation_dir, 1, output_file=f"{out_speech_dir}/utmos_{ablation_name}.txt")
+            wer_utmos2_dict[ablation_name] = [wer, mean_mos]
+            print(f"wer/sub/dele/ins of {ablation_name} are: {wer}, {sub}, {dele}, {ins}")
+            print(f"{ablation_name} UTMOS-v2: {mean_mos:.4f} ± {std_mos:.4f}")
+        with open(wer_utmos_json_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(wer_utmos2_dict, sort_keys=True, indent=4))
+        print(wer_utmos2_dict)
 
 def main(
         syn_styles: List[Tuple[Any, Any, Any, Any, Any, Any]],
@@ -396,7 +414,7 @@ def main(
             print(f"GD UTMOS-v2: {mean_mos:.4f} ± {std_mos:.4f}")
 
     ####### 4. Vis psd contour given json file  #######
-    img_out = os.path.join(out_dir, "img_out")
+    img_out = os.path.join(out_dir, "img_out1")
     if not os.path.isdir(img_out):
         Path(img_out).mkdir(exist_ok=True, parents=True)
 
@@ -483,6 +501,61 @@ def add_emo(eval_style_f, meta_json, eval_style_emo_f):
     with open(eval_style_emo_f, "w") as f:
         f.writelines(eval_style_emo_list)
 
+def main_fine_analysis(start_step, end_step, cmp_modelnames, style_syntex_names, out_dir):
+    ####### 1: extract psd from speech folder#######
+    if start_step <= 1 <= end_step:
+        cmp_modelnames.append("reference") if "reference" not in cmp_modelnames else None
+        # OUT
+        prosody_dict = {}
+        psd_json_path = os.path.join(out_dir, "psd_{}.json".format("_".join(cmp_modelnames)))
+
+        for model_name in cmp_modelnames:
+            for style_syntex_name in style_syntex_names:
+                print("Start extract frame-level pitch/energy from {} dir".format(model_name))
+                # IN
+                out_speech_dir = os.path.join(out_dir, model_name, style_syntex_name)
+                prosody_dict = extract_psd_fine_class2(mel_config, out_speech_dir, model_n=model_name,
+                                                       save_psd_file="", prosody_dict=prosody_dict, fine_cate=style_syntex_name)  # {"spk": {"emo": {"A/B/R": {"ids/dur/phones/psd":...}}}}
+        with open(psd_json_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(prosody_dict, sort_keys=True, indent=4))
+
+    ####### 2. Statistics psd and mc given psd_{}.json (output of 1) #######
+    if start_step <= 2 <= end_step:
+        cmp_modelnames.append("reference") if "reference" not in cmp_modelnames else None
+        cmp_modelnames_combine = "_".join(cmp_modelnames)
+        # IN
+        psd_json_path = os.path.join(out_dir, "psd_{}.json".format(cmp_modelnames_combine))
+
+        # OUT
+        psd_statics_json = os.path.join(out_dir, f"statsIntp_psd_{cmp_modelnames_combine}.json")
+        psd_ctw_res_json = os.path.join(out_dir, f"dtwIntp_psd_{cmp_modelnames_combine}.json")
+        psd_statics_mean_json = os.path.join(out_dir,
+                                             f"statsIntp_psd_{cmp_modelnames_combine}_mean.json")  # mean on speakers
+        statsave_pitch_mean = os.path.join(out_dir, "statsIntp_psd_mulitindex_pitch.csv")
+        statsave_energy_mean = os.path.join(out_dir, "statsIntp_psd_mulitindex_energy.csv")
+
+        with open(psd_json_path, "r") as f:
+            prosody_dict = json.load(f)
+        psd_ctw_res, psd_mcd_stat_res, psd_mean_stat_res = statcz_psd_mcd_fine_class2(prosody_dict, exclude_zero=True)  # {"spk": {"ang": {"modelA": [p1, e1, m1]}, "happy":{ "modelB": []]}}}
+        with open(psd_ctw_res_json, "w", encoding="utf-8") as f:
+            f.write(json.dumps(psd_ctw_res, sort_keys=True, indent=4))
+        with open(psd_statics_json, "w", encoding="utf-8") as f:
+            f.write(json.dumps(psd_mcd_stat_res, sort_keys=True, indent=4))
+        with open(psd_statics_mean_json, "w", encoding="utf-8") as f:
+            f.write(json.dumps(psd_mean_stat_res, sort_keys=True, indent=4))
+        pivot_pitch, pivot_energy = convert_json_to_pd2_fine(psd_mean_stat_res)  # model     hyper     pitch    energy
+
+        pivot_pitch.to_csv(statsave_pitch_mean, index=True)
+        pivot_energy.to_csv(statsave_energy_mean, index=True)
+
+        # angry: hier, style, dit, mono
+        # happy: Dit, mono
+        # neutral: hier, style, mono
+        # sad: hier, style, mono
+        # supprise: hier, mono, dit, draw, style
+        print(pivot_pitch)
+
+
 if __name__ == "__main__":
     """
     -1: Generate infer.json (3Type) from given style and text file
@@ -527,16 +600,19 @@ if __name__ == "__main__":
         "libritts": {"show_spk": "0013", "show_emo": "Surprise", "tick_gran": "syllable"}}
 
     ######### 3. INPUT
-    parser.add_argument("--style", type=str, default="exp/data/r1_test.txt")  # evalstyle  r1_test  r1 libri_r1, r1_v2, r1_50
-    parser.add_argument("--txt", type=str, default="exp/data/s1_2.txt")  # evaltxt_para.txt libri_s1, s1_v2, s1_5
+    parser.add_argument("--style", type=str, default="exp/data/r1_50.txt")  # evalstyle  r1_test  r1 libri_r1, r1_v2, r1_50, r1_test
+    parser.add_argument("--txt", type=str, default="exp/data/s1_5.txt")  # evaltxt_para.txt libri_s1, s1_v2, s1_5, s1_2
     dataset_name = "esd"    # libritts esd
 
     args = parser.parse_args()
     # orderd_cmp_modelnames = ["reference", "styletts2", "lddpm_dit_pe_libritts"]
     #orderd_cmp_modelnames = ["reference", "styletts2", "mdit_librittsesd_cutdurspn_pe"]
-    orderd_cmp_modelnames = ["reference", "hierspeech", "monoDiT"]
+    #orderd_cmp_modelnames = ["reference", "hierspeech", "monoDiT"]
+    orderd_cmp_modelnames = ["reference", "hierspeech", "styletts2", "monoDiT"]
+
     #eval_models = ["monoDiT", "DiT", "drawspeech", "styletts2", "hierspeech"]  # "monoDiT", "DiT", "drawspeech", "styletts2", "hierspeech"
     #eval_models = ["monoDiT_ab0808_m08_fb03", "monoDiT_ab0307_m08_fb03", "monoDiT_ab0808_m08_fbnone"]
+    eval_models = ["monoDiT", "DiT", "drawspeech", "styletts2", "hierspeech"]
     eval_models = ["monoDiT"]
 
     # INPUT -> syn_styles (emo, spk, wav_p, psd_code), synTexts, and vis related ()
@@ -549,23 +625,23 @@ if __name__ == "__main__":
     syn_styles = get_synStyle_from_file(args.style, split_char='|', melstyle_type="codec", dataset_name=dataset_name)  # emotion changed
     synTexts = get_synText_from_file(args.txt)
 
-    EVAL_RANDOM = False
-    EVAL_ABLATION = True
+    EVAL_RANDOM = True
+    EVAL_ABLATION = False
     EVAL_FINE1 = False
     EVAL_FINE2 = False
     if EVAL_RANDOM:
         NUM = 1
         for i in range(NUM):
             for j in range(NUM):
-                vis_psd_config[dataset_name]["show_txt"] = (i, j)
+                vis_psd_config[dataset_name]["show_txt"] = (i, j)   # cmp(ref,syn) on psd contours = (4, 2), (4, 0)
                 main(
                     syn_styles=syn_styles,
                     synTexts=synTexts,
                     cmp_modelnames=eval_models,
                     ref_json=ref_json[dataset_name],
                     out_dir=out_dir,
-                    start_step=6,
-                    end_step=6,
+                    start_step=1,
+                    end_step=1,
                     mel_config=mel_config,
                     vis_attn_config=vis_attn_config[dataset_name],
                     vis_psd_config=vis_psd_config[dataset_name],
@@ -574,40 +650,51 @@ if __name__ == "__main__":
                     style_syntex_name="random",
                     infer_json_name="infer.json",
                     psd_level="phoneme",
-                    save_attn=True,
+                    save_attn=True
                 )
 
     if EVAL_ABLATION:
+        # v2:????(attn affect pitch) v4: "train_epoch48" <- base, v5: "train_epoch68", v6: "train_w/_monoGuide",
+        # v7: "self_mask"
         MONO_ABL = True
         FUSE_ABL = False
         if MONO_ABL:
-            out_dir = f"/home/rosen/ckpt/exp/mdit_tts_{dataset_name}_ablation_mono"  # esd, _mdit_multiversion
+            out_dir = f"/home/rosen/ckpt/exp/mdit_tts_{dataset_name}_ablation_mono_v7"  # esd, _mdit_multiversion
             ref_speech_dir = os.path.join(out_dir, "reference", "random")
             main_ablation(
                 syn_styles=syn_styles,
                 synTexts=synTexts,
+                start_step=0,
+                end_step=0,
                 out_dir=out_dir,
                 ref_dir=ref_speech_dir,
-                mix_ref_pe_types=["none", "ref_pred_add"],
-                mono_guide_deltas=[0.2, 0.5, 0.8, 1.0, -1.0],
+                mix_ref_pe_types=["none"],  # ref_pred_add none
+                mono_guide_deltas=[0.2, -1.0],  # 0.2, 0.5, 0.8, -1.0
                 fuse_strength_gammas=[0.2],
                 save_attn_json_file=True,
                 save_cond=True)
         if FUSE_ABL:
             out_dir = f"/home/rosen/ckpt/exp/mdit_tts_{dataset_name}_ablation_fuse"  # esd, _mdit_multiversion
             ref_speech_dir = os.path.join(out_dir, "reference", "random")
+            # 1. ref_pe: reference pitch/energy (pe)
+            # 2. none  : predicted pe
+            # 3. ref_pred_add: fusing reference pe to predicted pe
             main_ablation(
                 syn_styles=syn_styles,
                 synTexts=synTexts,
                 out_dir=out_dir,
                 ref_dir=ref_speech_dir,
-                mix_ref_pe_types=["ref_pe", "none", "ref_pred_add"],  # ref_pe, none, ref_pred_add
+                mix_ref_pe_types=["ref_pe", "none", "ref_pred_add"],
                 mono_guide_deltas=[0.5],
                 fuse_strength_gammas=[0.2, 0.4, 0.6],
                 save_attn_json_file=False,
                 save_cond=True)
 
     if EVAL_FINE1:
+        """
+        v1
+        """
+
         # Test on synText and reference speech which are on two restriction
         ## 1. ? < syn_l / ref_l < ?
         ## 2. parts_speech(syn_txt) != parts_speech(ref_text)
@@ -623,25 +710,29 @@ if __name__ == "__main__":
         syn_styles = get_synStyle_from_file(ref_style_f, split_char='|', melstyle_type="codec")  # emotion changed
         fine_synTexts = [get_synText_from_file(fine_categ_f) for fine_categ_f in fine_categ_fs]
 
-        for fine_cate_label, fine_synText in zip(fine_categ_labels, fine_synTexts):
-            main(
-                syn_styles=syn_styles,
-                synTexts=fine_synText,
-                cmp_modelnames=eval_models,
-                ref_json=ref_json[dataset_name],
-                out_dir=out_dir,
-                start_step=1,
-                end_step=2,   # DO first start_step, end_step=(0,0), and second 1, 2
-                mel_config=mel_config,
-                vis_attn_config=vis_attn_config[dataset_name],
-                vis_psd_config=vis_psd_config[dataset_name],
-                vis_psdmel_config=vis_psdmel_config[dataset_name],
-                save_attn_json_file=True,
-                style_syntex_name=fine_cate_label,
-                infer_json_name=f"infer_{fine_cate_label}.json",
-                psd_level="frame",
-                save_attn=False)
-            break # break at second 1, 2
+        if False:
+            for fine_cate_label, fine_synText in zip(fine_categ_labels, fine_synTexts):
+                main(
+                    syn_styles=syn_styles,
+                    synTexts=fine_synText,
+                    cmp_modelnames=eval_models,
+                    ref_json=ref_json[dataset_name],
+                    out_dir=out_dir,
+                    start_step=0,
+                    end_step=0,   # Set (start_step, end_step)=(0,0), and then set to (1, 2)
+                    mel_config=mel_config,
+                    vis_attn_config=vis_attn_config[dataset_name],
+                    vis_psd_config=vis_psd_config[dataset_name],
+                    vis_psdmel_config=vis_psdmel_config[dataset_name],
+                    save_attn_json_file=True,
+                    style_syntex_name=fine_cate_label,
+                    infer_json_name=f"infer_{fine_cate_label}.json",
+                    psd_level="frame",
+                    save_attn=False)
+                #break # break at second 1, 2
+
+        main_fine_analysis(2, 2, eval_models, fine_categ_labels, out_dir)
+
 
     if EVAL_FINE2:
         ## INPUT
@@ -657,22 +748,24 @@ if __name__ == "__main__":
         syn_styles = get_synStyle_from_file(ref_style_f, split_char='|', melstyle_type="codec")  # emotion changed
         fine_synTexts = [get_synText_from_file(fine_categ_f) for fine_categ_f in fine_categ_fs]
 
-        for fine_cate_label, fine_synText in zip(fine_categ_labels, fine_synTexts):
-            main(
-                syn_styles=syn_styles,
-                synTexts=fine_synText,
-                cmp_modelnames=eval_models,
-                ref_json=ref_json[dataset_name],
-                out_dir=out_dir,
-                start_step=1,
-                end_step=2,  # DO first 0,0, and second 1, 2
-                mel_config=mel_config,
-                vis_attn_config=vis_attn_config[dataset_name],
-                vis_psd_config=vis_psd_config[dataset_name],
-                vis_psdmel_config=vis_psdmel_config[dataset_name],
-                save_attn_json_file=True,
-                style_syntex_name=fine_cate_label,
-                infer_json_name=f"infer_{fine_cate_label}.json",
-                psd_level="frame",
-                save_attn=False)
-            break
+        if False:
+            for fine_cate_label, fine_synText in zip(fine_categ_labels, fine_synTexts):
+                main(
+                    syn_styles=syn_styles,
+                    synTexts=fine_synText,
+                    cmp_modelnames=eval_models,
+                    ref_json=ref_json[dataset_name],
+                    out_dir=out_dir,
+                    start_step=1,
+                    end_step=2,  # DO first 0,0, and second 1, 2
+                    mel_config=mel_config,
+                    vis_attn_config=vis_attn_config[dataset_name],
+                    vis_psd_config=vis_psd_config[dataset_name],
+                    vis_psdmel_config=vis_psdmel_config[dataset_name],
+                    save_attn_json_file=True,
+                    style_syntex_name=fine_cate_label,
+                    infer_json_name=f"infer_{fine_cate_label}.json",
+                    psd_level="frame",
+                    save_attn=False
+                )
+        main_fine_analysis(2, 2, eval_models, fine_categ_labels, out_dir)

@@ -94,6 +94,46 @@ def convert_json_to_pd2(json_data, custom_order=None, need_multi_index=True, nee
     return df, avg_per_model
 
 
+def convert_json_to_pd2_fine(output_dict, custom_order=None, need_multi_index=True, need_print_latex=True):
+    records_pitch = []
+    records_energy = []
+
+    emotion_order = ['Angry', 'Neutral', 'Sad', 'Happy', 'Surprise']
+    # flatten dict into records
+    for emotion in emotion_order:
+        emo_data = output_dict[emotion]
+        for model, model_data in emo_data.items():
+            for fine_cate, values in model_data.items():
+                records_pitch.append({
+                    "model": model,
+                    "emotion": emotion,
+                    "fine_cate": fine_cate,
+                    "value": round(values[0], 2)  # take pitch only
+                })
+                records_energy.append({
+                    "model": model,
+                    "emotion": emotion,
+                    "fine_cate": fine_cate,
+                    "value": round(values[1], 2)  # take pitch only
+                })
+
+    # create DataFrame
+    df_pitch = pd.DataFrame(records_pitch)
+    df_energy = pd.DataFrame(records_energy)
+
+    # pivot to MultiIndex columns
+    pivot_df_pitch = df_pitch.pivot(
+        index="model",
+        columns=["emotion", "fine_cate"],
+        values="value")
+
+    pivot_df_energy = df_energy.pivot(
+        index="model",
+        columns=["emotion", "fine_cate"],
+        values="value")
+    return pivot_df_pitch, pivot_df_energy
+
+
 def convert_json_to_pd(json_data):
     rows = []
     for model, hypers in json_data.items():
@@ -130,6 +170,7 @@ def combine_jsons(attn_model1_json, attn_model2_json, combined_model12_json):
     with open(combined_model12_json, 'w') as f:
         json.dump(combined_dict, f, indent=4)
 
+
 def combine_two_jsons(attn_model1, attn_model2):
     """
     attn_model1: {"spk": {"emo": {"A/B": {"ids/qkdurs/qkphones":... }}}}
@@ -141,6 +182,26 @@ def combine_two_jsons(attn_model1, attn_model2):
                 if model not in combined_dict[spk][emo].keys():
                     combined_dict[spk][emo][model] = attn_model2[spk][emo][model]
     return combined_dict
+
+
+def replace_certain_key_value(original_dict_path, replacement_dict_path, replaced_dict_path, key_depth=2, key_name="monoDiT"):
+    """
+    replace certain key from replacement dictionary to original dictionary
+    """
+    with open(original_dict_path, 'r') as f:
+        original_dict = json.load(f)
+    with open(replacement_dict_path, 'r') as f:
+        replacement_dict = json.load(f)
+
+    replaced_dict = original_dict.copy()
+    for spk, emo_model_dict in replaced_dict.items():
+        for emo, model_dict in emo_model_dict.items():
+            for model, psd_dict in model_dict.items():
+                if model == key_name and key_depth == 2:
+                    replaced_dict[spk][emo][model] = replacement_dict[spk][emo][model]
+
+    with open(replaced_dict_path, 'w') as f:
+        json.dump(replaced_dict, f, indent=4)
 
 
 def renew_dict(current_dict, old_dict):

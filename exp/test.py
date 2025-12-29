@@ -5,16 +5,28 @@ import numpy as np
 
 seed = 42
 torch.manual_seed(seed)
-print(torch.randn(1, 5))
-print(torch.randn(1, 5))
-torch.cuda.manual_seed_all(seed)
-np.random.seed(seed)
-random.seed(seed)
+
+for a in range(4):
+    #torch.manual_seed(seed)
+    print(torch.randn(1, 5))
+
+
+def a():
+    for a in range(4):
+        # torch.manual_seed(seed)
+        b()
+def b():
+    print(torch.randn(5))
+
+a()
+#torch.cuda.manual_seed_all(seed)
+#np.random.seed(seed)
+#random.seed(seed)
 
 # Force deterministic CuDNN ops
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
-
+"""
 # ---------- Load model ----------
 model = utmosv2.create_model(pretrained=True)
 model.eval()  # disable dropout, batchnorm randomness
@@ -38,3 +50,4 @@ print(f"Average UTMOS-v2 score: {mean_mos:.4f}")
 # Files evaluated: 250
 
 
+"""

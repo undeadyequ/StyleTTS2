@@ -5,10 +5,64 @@ from exp.syllable import extend_phone2syl
 import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.image as mpimg
-
+import math
 
 ordered_subs = ["Neutral", "Sad", "Angry", "Happy", "Surprise"]
 ordered_lengend = ["reference", "ddpm_dit_cross", "ddpm_mdit_cross"]
+STYLE_MAP = {
+    # Emphasized (for immediate visual comparison)
+    "reference": dict(
+        color="black",
+        linewidth=3.5,
+        linestyle="--",
+        marker="o",
+        markersize=4,
+        alpha=1.0,
+        zorder=5,
+    ),
+    "monoDiT": dict(
+        color="tab:blue",
+        linewidth=3.0,
+        linestyle="-",
+        marker="o",
+        markersize=4,
+        alpha=1.0,
+        zorder=4,
+    ),
+    # Baselines (lighter styling to reduce clutter)
+    "styletts2": dict(
+        color="tab:green",
+        linewidth=1.6,
+        linestyle="-",
+        marker=None,
+        alpha=0.6,
+        zorder=2,
+    ),
+    "hierspeech": dict(
+        color="tab:red",
+        linewidth=1.6,
+        linestyle="-",
+        marker=None,
+        alpha=0.6,
+        zorder=2,
+    ),
+    "DiT": dict(
+        color="tab:purple",
+        linewidth=1.6,
+        linestyle="-",
+        marker=None,
+        alpha=0.6,
+        zorder=2
+    ),
+    "drawspeech": dict(
+        color="tab:orange",
+        linewidth=1.6,
+        linestyle="-",
+        marker=None,
+        alpha=0.6,
+        zorder=2
+    ),
+}
 
 def vis_dual_utmos_rmse(dul_axis_data, out_pic):
     # Example data
@@ -233,6 +287,149 @@ def vis_psd(pitch_dict_for_vis, energy_dict_for_vis, out_png, txt_id, show_ref_p
         ordered_lengend=ordered_lengend
     )
 
+
+def vis_psd_contour2(
+    pitch_phonemes_dict,
+    emotions=None,
+    model_order=("reference", "monoDiT", "styleTTS2", "hierspeech+++"),
+    suptitle=None,
+    subtitle=None,
+    ncols=2,
+    figsize=(18, 10),
+    xtick_stride=None,         # None = auto, or set e.g., 1 to show every phoneme
+    rotate_xticks=0,
+    y_label="Hz",
+    x_label="Phoneme index",
+    grid_alpha=0.2,
+    legend_ncol=4,
+    savepath=None,
+    show=True,
+):
+    """
+    Plot F0 (pitch) contours for multiple emotions and models.
+
+    Input
+    -----
+    pitch_phonemes_dict : dict
+        {emotion: {model_name: (pitch_list, phoneme_list), ...}}
+        with len(pitch_list) == len(phoneme_list).
+
+    Notes
+    -----
+    - The x-axis uses phoneme indices; tick labels are phoneme symbols.
+    - If phoneme sequences differ across models for an emotion, each curve is plotted
+      against its own index grid; tick labels are derived from the reference
+      phoneme list when available.
+    """
+    model_rename_dict = {
+        "monoDiT": "monoDiT-TTS",
+        "styletts2": "StyleTTS2",
+        "drawspeech": "Drawspeech",
+        "DiT": "DiT-TTS",
+        "hierspeech": "Hierspeech++",
+        "reference": "Reference",
+    }
+
+    if emotions is None:
+        emotions = list(pitch_phonemes_dict.keys())
+
+    n = len(emotions)
+    nrows = math.ceil(n / ncols)
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+    if suptitle is not None:
+        fig.suptitle(suptitle, fontsize=14, y=0.98)
+    if subtitle:
+        fig.text(0.5, 0.955, subtitle, ha="center", va="top", fontsize=11)
+
+    legend_handles = None
+    legend_labels = None
+
+    for idx, emotion in enumerate(emotions):
+        r, c = divmod(idx, ncols)
+        ax = axes[r][c]
+        ax.set_title(str(emotion), fontsize=12)
+
+        emo_dict = pitch_phonemes_dict.get(emotion, {})
+        if not emo_dict:
+            ax.text(0.5, 0.5, f"No data for {emotion}", ha="center", va="center")
+            ax.axis("off")
+            continue
+
+        # order the legend
+        ordered_models = [m for m in model_order if m in emo_dict]
+        remaining_models = [m for m in emo_dict.keys() if m not in ordered_models]
+        models_to_plot = ordered_models + remaining_models
+
+        for model_name in models_to_plot:
+            pitch_list, phoneme_list = emo_dict[model_name]
+            if len(pitch_list) != len(phoneme_list):
+                raise ValueError(
+                    f"Length mismatch for emotion={emotion}, model={model_name}: "
+                    f"{len(pitch_list)} != {len(phoneme_list)}"
+                )
+            lengend_model_name = model_rename_dict[model_name]
+
+            x = np.arange(len(pitch_list))
+            style = STYLE_MAP.get(model_name, {})
+            ax.plot(
+                x,
+                pitch_list,
+                label=lengend_model_name,
+                **style,
+            )
+
+        # Tick labels from monoDiT if available; otherwise fall back to the first model
+        if "monoDiT" in emo_dict:
+            base_pitch, base_phonemes = emo_dict["monoDiT"]
+        #else:
+        #    first_model = next(iter(emo_dict.keys()))
+        #    _, base_phonemes = emo_dict[first_model]
+
+        L = len(base_phonemes)
+        if xtick_stride is None:
+            stride = max(1, int(math.ceil(L / 24)))  # keep tick labels readable
+        else:
+            stride = max(1, int(xtick_stride))
+
+        tick_pos = list(range(0, L, stride))
+        tick_lab = [base_phonemes[i] for i in tick_pos]
+
+        ax.set_xticks(tick_pos)
+        ax.set_xticklabels(tick_lab, rotation=rotate_xticks)
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(y_label)
+        ax.grid(True, alpha=grid_alpha)
+
+        if legend_handles is None:
+            legend_handles, legend_labels = ax.get_legend_handles_labels()
+
+    # Hide unused axes
+    for j in range(n, nrows * ncols):
+        r, c = divmod(j, ncols)
+        axes[r][c].axis("off")
+
+    if legend_handles is not None:
+        fig.legend(
+            legend_handles,
+            legend_labels,
+            loc="upper center",
+            ncol=min(legend_ncol, len(legend_labels)),
+            frameon=True,
+            bbox_to_anchor=(0.5, 0.915),
+        )
+
+    plt.tight_layout(rect=[0, 0, 1, 0.9])
+
+    if savepath is not None:
+        fig.savefig(savepath, dpi=200, bbox_inches="tight")
+
+    if show:
+        plt.show()
+
+    return fig
+
+
 def vis_psd_enh(pitch_dict_for_vis, prosody_dict, out_png, txt_id, show_ref_phone_on_line=True, aux_range=None):
     rc_num = (3, 2)
     legend_mark = ("*", "v", ".")  # reference, guide, ropePhone_guide
@@ -310,7 +507,7 @@ def compare_pitch_contour(
     """
     args:
     sub_leg_data_dict:
-    {emotion:{modelA: ([1, 2, 5], [p1. p2]), modelB: ([2, 3, 4], [p1, ..])...}}
+    {emotion:{modelA: ([1, 2, 5], [p1, p2]), modelB: ([2, 3, 4], [p1, ..])...}}
     rc_num: (2, 3)
     title: ""
     legend_mark: ["*", "o"]  # same len as len(subtitle.keys())  -> assert
@@ -525,3 +722,307 @@ def show_two_attn_map(
         n += 1
     fig.suptitle(title)
     fig.savefig(out_png, dpi=300)
+
+def _to_numpy(x):
+    """Accept numpy or torch tensors."""
+    if hasattr(x, "detach"):
+        x = x.detach()
+    if hasattr(x, "cpu"):
+        x = x.cpu()
+    if hasattr(x, "numpy"):
+        return x.numpy()
+    return np.asarray(x)
+
+def vis_tbh_cross_attention(
+    tbh_attn,
+    time_labels=None,
+    block_labels=None,
+    head_labels=None,
+    title=None,
+    dashed_time_separator=True,
+    savepath=None,
+):
+    """
+    Plot cross-attention maps in a single figure with layout:
+        rows = time_number * block_number   (2*2=4)
+        cols = heads_num                    (4)
+
+    Input:
+        tbh_attn: array-like, shape (T=2, B=2, H=4, L, L)
+                 attention weights or attention-like values.
+
+    Layout (default row order):
+        Row 0: time 0, block 0
+        Row 1: time 0, block 1
+        Row 2: time 1, block 0
+        Row 3: time 1, block 1
+    """
+    A = _to_numpy(tbh_attn)
+    assert A.ndim == 5, f"Expected 5D tensor (T,B,H,L,L), got shape {A.shape}"
+    T, B, H, L1, L2 = A.shape
+    assert (T, B, H) == (2, 2, 4), f"Expected (2,2,4, L, L), got {(T, B, H)}"
+    assert L1 == L2, f"Expected square attention maps (L,L), got {(L1, L2)}"
+    L = L1
+
+    # -----------------------------
+    # Academic-style figure settings
+    # -----------------------------
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.size": 9,
+        "axes.titlesize": 9,
+        "axes.labelsize": 9,
+        "xtick.labelsize": 8,
+        "ytick.labelsize": 8,
+        "figure.dpi": 300,
+    })
+
+    if time_labels is None:
+        time_labels = [r"Time 1 (early)", r"Time 2 (late)"]
+    if block_labels is None:
+        block_labels = ["Block 1 (shallow)", "Block 2 (deep)"]
+    if head_labels is None:
+        head_labels = [f"Head {i+1}" for i in range(H)]
+
+    # Row labels: (time, block) pairs
+    row_pairs = [(t, b) for t in range(T) for b in range(B)]
+    row_labels = [f"{block_labels[b]} · {time_labels[t]}" for (t, b) in row_pairs]
+
+    # Create figure: 4 rows × 4 cols
+    nrows = T * B
+    ncols = H
+    fig, axes = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(8.6, 7.8),
+        constrained_layout=True,
+    )
+
+    # Shared color scale across all panels (recommended for fair comparison)
+    vmin = float(np.min(A))
+    vmax = float(np.max(A))
+
+    images = []
+    for r, (t, b) in enumerate(row_pairs):
+        for h in range(H):
+            ax = axes[r, h]
+            im = ax.imshow(
+                A[t, b, h],
+                origin="lower",
+                aspect="auto",
+                vmin=vmin,
+                vmax=vmax,
+            )
+            images.append(im)
+
+            # Column titles (heads)
+            if r == 0:
+                ax.set_title(head_labels[h])
+
+            # Row labels on the first column only
+            if h == 0:
+                ax.set_ylabel(row_labels[r] + "\nAcoustic frame index")
+
+            # Minimal ticks
+            ax.set_xticks([0, L // 2, L - 1])
+            ax.set_yticks([0, L // 2, L - 1])
+
+            # X-axis label only on bottom row
+            if r == nrows - 1:
+                ax.set_xlabel("Prosody frame index")
+
+    # One shared colorbar
+    cbar = fig.colorbar(images[0], ax=axes, fraction=0.025, pad=0.01)
+    cbar.set_label("Cross-attention weight")
+
+    # Optional dashed separator between time groups:
+    # between (time 0 rows) and (time 1 rows), i.e., between row 1 and row 2.
+    if dashed_time_separator:
+        # Use figure coordinates so it remains correct under layout changes.
+        y_sep = axes[B - 1, 0].get_position().y0  # bottom of row 1 (0-index)
+        sep = plt.Line2D(
+            [0.06, 0.94],
+            [y_sep, y_sep],
+            transform=fig.transFigure,
+            linestyle="--",
+            linewidth=1.0,
+            color="gray",
+            alpha=0.8,
+        )
+        fig.add_artist(sep)
+
+    # Optional title (often omitted in final paper; put in caption instead)
+    if title is not None:
+        fig.suptitle(title, y=1.02, fontsize=10)
+
+    if savepath is not None:
+        fig.savefig(savepath, bbox_inches="tight")
+
+    plt.show()
+
+
+def vis_tbh_cross_attention_time_grouped(
+    tbh_attn,
+    block_labels=None,
+    time_labels=None,
+    head_labels=None,
+    dashed_time_separator=True,
+    savepath=None,
+    title=None,
+):
+    """
+    Plot cross-attention maps with layout:
+        rows = blocks (B=2)
+        cols = times (T=2) grouped × heads (H=4) within each group
+             = T * H = 8
+
+    Column order:
+        [time 0: head1 head2 head3 head4] | [time 1: head1 head2 head3 head4]
+    Input:
+        tbh_attn: shape (T=2, B=2, H=4, L, L)
+    """
+    A = _to_numpy(tbh_attn)
+    assert A.ndim == 5, f"Expected (T,B,H,L,L), got {A.shape}"
+    T, B, H, L1, L2 = A.shape
+    assert (T, B, H) == (2, 2, 4), f"Expected (2,2,4,L,L), got {(T,B,H)}"
+    if L1 != L2:
+        tbh_attn = tbh_attn[:, :min(L1, L2), :min(L1, L2)]
+        L1 = min(L1, L2)
+        L2 = min(L1, L2)
+    assert L1 == L2, f"Expected square maps (L,L), got {(L1,L2)}"
+    L = L1
+
+    # -----------------------------
+    # Academic plotting style
+    # -----------------------------
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.size": 9,
+        "axes.titlesize": 9,
+        "axes.labelsize": 9,
+        "xtick.labelsize": 8,
+        "ytick.labelsize": 8,
+        "figure.dpi": 300,
+    })
+
+    if block_labels is None:
+        block_labels = ["Block 1 (shallow)", "Block 6 (deep)"]
+    if time_labels is None:
+        time_labels = [r"Early diffusion ($t=t_1$)", r"Late diffusion ($t=t_T$)"]
+    if head_labels is None:
+        head_labels = [f"Head {i+1}" for i in range(H)]
+
+    nrows = B
+    ncols = T * H  # 8
+
+    fig, axes = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(14.8, 4.8),
+        constrained_layout=True,
+    )
+
+    # Shared scale for fair comparison
+    vmin = float(A.min())
+    vmax = float(A.max())
+
+    images = []
+
+    # Plot: columns grouped by time, with heads inside each group
+    for b in range(B):
+        for t in range(T):
+            for h in range(H):
+                col = t * H + h
+                ax = axes[b, col]
+
+                im = ax.imshow(
+                    A[t, b, h],
+                    origin="lower",
+                    aspect="auto",
+                    vmin=vmin,
+                    vmax=vmax,
+                )
+                images.append(im)
+
+                # Head labels (top row only)
+                if b == 0:
+                    ax.set_title(head_labels[h])
+
+                # Row labels (leftmost column only)
+                if col == 0:
+                    ax.set_ylabel(block_labels[b] + "\nAcoustic frame index")
+
+                # Minimal ticks
+                ax.set_xticks([0, L // 2, L - 1])
+                ax.set_yticks([0, L // 2, L - 1])
+
+                # X label only on bottom row
+                if b == nrows - 1:
+                    ax.set_xlabel("Prosodic frame index")
+
+    # Shared colorbar
+    cbar = fig.colorbar(images[0], ax=axes, fraction=0.02, pad=0.01)
+    cbar.set_label("Cross-attention weight")
+
+    # -----------------------------
+    # Add time-group headers above each group of 4 heads
+    # -----------------------------
+    # Compute group centers in figure coordinates using axes positions.
+    top_row_left = axes[0, 0].get_position()
+    top_row_right = axes[0, ncols - 1].get_position()
+
+    # A dynamic vertical offset proportional to axes height
+    axes_h = top_row_left.height
+    header_y = top_row_left.y1 + 0.35 * axes_h  # lift clearly above subplot titles
+
+    for t in range(T):
+        left_ax = axes[0, t * H]
+        right_ax = axes[0, t * H + (H - 1)]
+
+        left_pos = left_ax.get_position()
+        right_pos = right_ax.get_position()
+
+        x_center = 0.5 * (left_pos.x0 + right_pos.x1)
+
+        fig.text(
+            x_center,
+            header_y,
+            time_labels[t],
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontweight="bold",
+            zorder=20,  # ensure on top
+        )
+
+    # Optional dashed vertical separator between the two time groups
+    if dashed_time_separator:
+        # x boundary between the two groups: right edge of col H-1 and left edge of col H
+        left_group_right = axes[0, H - 1].get_position().x1
+        right_group_left = axes[0, H].get_position().x0
+        x_sep = 0.6 * (left_group_right + right_group_left)  # centered in the gap
+
+        # y span exactly covering the grid of axes (all rows)
+        grid_top = axes[0, 0].get_position().y1
+        grid_bottom = axes[nrows - 1, 0].get_position().y0
+
+        sep = plt.Line2D(
+            [x_sep, x_sep],
+            [grid_bottom, grid_top],
+            transform=fig.transFigure,
+            linestyle=(0, (4, 3)),  # clearer dash pattern than "--"
+            linewidth=2.0,  # thicker
+            color="black",  # higher contrast
+            alpha=0.9,
+            zorder=15,  # draw above axes
+        )
+        sep.set_clip_on(False)  # never clip by layout/axes
+        fig.add_artist(sep)
+
+    if title is not None:
+        fig.suptitle(title, y=1.03, fontsize=11)
+
+    if savepath is not None:
+        fig.savefig(savepath, bbox_inches="tight")
+
+    #plt.show()

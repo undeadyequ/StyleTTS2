@@ -14,17 +14,23 @@ Other Pictures
 """
 import json
 import os.path
+import torch
+
+from mpmath.libmp.libelefun import atan_newton
+
 from exp.ref_aware_pe3 import fuse_prosody_smooth_additive
-from vis_data_adaptor import phone2syl
+from utilities.vis import save_plot
+from vis_data_adaptor import phone2syl, convert_vis_psd_json
 import matplotlib.pyplot as plt
 
 from visualization import vis_mono_guide_mask
 from vis2 import plot_mel_with_pitch, plot_attn_with_rect, plot_lines, plot_mel_with_pitch2, plot_attn_with_rect2
-from inference_1_or_2 import inference_second, get_second_model
+#from inference_1_or_2 import inference_second, get_second_model
 import numpy as np
 from utilities.guide_mask import make_guided_attention_masks2
-from visualization import vis_matrix_attn, vis_matrix_attn2
+from visualization import vis_matrix_attn, vis_matrix_attn2, vis_psd_contour2, vis_tbh_cross_attention, vis_tbh_cross_attention_time_grouped
 from itertools import accumulate
+from exec_draw_two_pitch import plot_pitch_multi
 
 model_config = {
         "mdit_cfm_v10": ["first_txt2mel_cfm_v10/epoch_2nd_00048.pth",
@@ -56,24 +62,13 @@ def read_attn(attn_path, show_t=0, show_b=5, show_h=0):
     return attn
 
 
-def draw_psd_contour(img_out):
-    psd_compare_png = os.path.join(img_out, f"psd_{cmp_modelnames_combine}_ref{show_text[0]}_syn{show_text[1]}.png")
-    pitch_cmp_path, energy_cmp_path = (os.path.join(out_dir, f"vis_pitch_{cmp_modelnames_combine}.json"),
-                                       os.path.join(out_dir, f"vis_energy_{cmp_modelnames_combine}.json"))
-    # visualize psd
-    pitch_dict_for_vis, energy_dict_for_vis = convert_vis_psd_json(
-        psd_cmp_dict["spk" + show_spk], show_text, cutpad_reference=False,
-        save_dict=(pitch_cmp_path, energy_cmp_path))  # for_vis: {"emo1": {"model1": list(psd_len)}}}
-    vis_psd(pitch_dict_for_vis, energy_dict_for_vis, psd_compare_png, show_text, ordered_lengend=orderd_cmp_modelnames)
-
-
-def create_bandMatrix_monoGuideAttns(speech_id, band_sigmas, show_t=0, show_b=0, show_h=0):
-    mono_ablation_dir = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono/monoDiT_ablation"
+def create_bandMatrix_monoGuideAttns(speech_id, band_sigmas, show_t=0, show_b=0, show_h=0, mono_ablation_dir=""):
+    #mono_ablation_dir = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono/monoDiT_ablation"
     mono_sigma_attn_dirs = ["none_m02_f02_attn", "none_m05_f02_attn", "none_m08_f02_attn", "none_mm10_f02_attn"]
     bandMatrixs = []
     monoGuideAttns = []
     for attn_dir in mono_sigma_attn_dirs:
-        attn_path = os.path.join(mono_ablation_dir, attn_dir, speech_id + ".npy")
+        attn_path = os.path.join(mono_ablation_dir, "monoDiT_ablation", attn_dir, speech_id + ".npy")
         attn = read_attn(attn_path, show_t, show_b, show_h)
         monoGuideAttns.append(attn)
     for sigma in band_sigmas:
@@ -84,12 +79,12 @@ def create_bandMatrix_monoGuideAttns(speech_id, band_sigmas, show_t=0, show_b=0,
         bandMatrixs.append(guide_matrix.squeeze())
     return bandMatrixs, monoGuideAttns
 
-def draw_bandMatrix_monoGuideAttns(speech_id, band_sigmas, show_t=0, show_b=0, show_h=0, out_png="band_matrix_mono_attn.png"):
+def draw_bandMatrix_monoGuideAttns(speech_id, band_sigmas, show_t=0, show_b=0, show_h=0, out_png="band_matrix_mono_attn.png", mono_ablation_dir=""):
     """ draw bands and attns when generated speech_id, conditioned on differentband_sigmas
         band1 band2 band3
         attn1 attn2 attn3
     """
-    bandMatrixs, monoGuideAttns = create_bandMatrix_monoGuideAttns(speech_id, band_sigmas, show_t=show_t, show_b=show_b, show_h=show_h)
+    bandMatrixs, monoGuideAttns = create_bandMatrix_monoGuideAttns(speech_id, band_sigmas, show_t=show_t, show_b=show_b, show_h=show_h, mono_ablation_dir=mono_ablation_dir)
     vis_matrix_attn2(bandMatrixs, monoGuideAttns, out_png)
 
 def set_academic_style():
@@ -238,14 +233,15 @@ def draw_monGuideAttn_refSynMel2(
         speech_id="spk0019_Surprise_ref3_syn0",
         band_sigmas=("none_m02_f02", "none_m10_f02"),
         out_png="monGuideAttn_refSynMel.png",
-        show_t=0, show_b=0, show_h=0):
+        show_t=0, show_b=0, show_h=0,
+        ablation_dir="/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono_v3"):
 
     set_academic_style()  # <<< NEW
 
     # Directories
-    mono_ablation_dir = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono/monoDiT_ablation"
-    ref_dir = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono/reference/random"
-    attn_path = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono/attn_mdit_random.json"
+    mono_ablation_dir = os.path.join(ablation_dir, "monoDiT_ablation")
+    ref_dir = os.path.join(ablation_dir, "reference/random")
+    attn_path = os.path.join(ablation_dir, "attn_mdit_random.json")
 
     show_spk, show_emo = speech_id.split("_")[:2]
     ref_id = speech_id.rsplit("_", 1)[0]
@@ -352,12 +348,12 @@ def draw_monGuideAttn_refSynMel2(
     # === ROW 2: synthesized mels ===
     axs[1, 0].axis("off")
 
-    plot_mel_with_pitch2(axs[1, 1], "Baseline Synthesis", origin_wav,
-                        ("", xticks, x_ticklabs), speech_kwargs,
+    plot_mel_with_pitch2(axs[1, 1], "W/O Mono-Guided", origin_wav,
+                        ("", xticks, x_ticklabs), speech_kwargs, show_pitch=True,
                         max_len=min_frame)
 
-    plot_mel_with_pitch2(axs[1, 2], "Mono-Guided Synthesis", monoGuided_wav,
-                        ("", xticks_mono, x_ticklabs_mono), speech_kwargs,
+    plot_mel_with_pitch2(axs[1, 2], "W/ Mono-Guided", monoGuided_wav,
+                        ("", xticks_mono, x_ticklabs_mono), speech_kwargs, show_pitch=True,
                         max_len=min_frame)
 
     fig.savefig(out_png, bbox_inches="tight")
@@ -402,6 +398,73 @@ def draw_cond_syn_pitch(out_png="monGuideAttn_refSynMel.png"):
 
     fig.tight_layout()
     fig.savefig(out_png, dpi=300)
+
+def draw_pitch_energy_contours(psd_json_path, vis_psd_config, out_pitch_img, out_energy_img, vis_pitch_cmp_path, vis_energy_cmp_path, use_vis_data=False):
+    # hyper
+    show_spk, show_text = vis_psd_config["esd"]["show_spk"], vis_psd_config["esd"]["show_txt"]
+
+    with open(psd_json_path, "r") as f:
+        psd_cmp_dict = json.load(f)
+
+    if use_vis_data:
+        with open(vis_pitch_cmp_path, "r") as f:
+            vis_pitch_phonemes_dict = json.load(f)
+        with open(vis_energy_cmp_path, "r") as f:
+            vis_energy_phonemes_dict = json.load(f)
+    else:
+        vis_pitch_phonemes_dict, vis_energy_phonemes_dict = convert_vis_psd_json(
+            psd_cmp_dict["spk" + show_spk], show_text, cutpad_reference=False, save_dict=(vis_pitch_cmp_path, vis_energy_cmp_path))  # for_vis: {"emo1": {"model1": list(psd_len)}}}
+
+    emotions = ["Neutral", "Sad", "Angry", "Happy", "Surprise"]
+
+    model_orders = ("reference", "DiT", "styleTTS2", "monoDiT", "hierspeech", "drawspeech")
+    title = "Pitch contours of reference and synthesized speech generated by monoDiT-TTS, DrawSpeech, StyleTTS2, DiT-TTS, and HierSpeech++."
+    vis_psd_contour2(
+        vis_pitch_phonemes_dict,
+        emotions=emotions,
+        model_order=model_orders,
+        suptitle=None,
+        xtick_stride=1,  # show every phoneme label (as in your screenshot)
+        rotate_xticks=0,
+        savepath=out_pitch_img,
+    )
+    vis_psd_contour2(
+        vis_energy_phonemes_dict,
+        emotions=emotions,
+        model_order=model_orders,
+        subtitle=None,
+        xtick_stride=1,  # show every phoneme label (as in your screenshot)
+        rotate_xticks=0,
+        savepath=out_energy_img,
+    )
+
+
+def draw_tbh_cross_attn(tbh_attn, out_pitch_img="tbh_cross_attn.pdf", b=[0, 5]):
+    # IN
+    """
+    L = 80
+    tbh_attn = np.random.rand(2, 2, 4, L, L).astype(np.float32)
+    tbh_attn = tbh_attn / (tbh_attn.sum(axis=-1, keepdims=True) + 1e-8)
+    """
+    times = torch.tensor([0, 1])
+    blks = torch.tensor(b)
+    heads = torch.tensor([0, 1, 2, 3])
+
+    tt, bb, hh = torch.meshgrid(times, blks, heads, indexing="ij")
+    tbh_attn_sel = tbh_attn[tt, bb, hh, ...]
+    #tbh_attn_sel = tbh_attn[bb, 0, hh, ...]
+
+    # OUT
+    vis_tbh_cross_attention_time_grouped(
+        tbh_attn_sel,
+        time_labels=[r"$t=0$ (early)", r"$t=T$ (late)"],
+        block_labels=["Block 1", "Block 6"],
+        head_labels=["Head 1", "Head 2", "Head 3", "Head 4"],
+        title=None,
+        dashed_time_separator=False,
+        savepath=out_pitch_img,
+    )
+
 
 
 def synthesize_sample(ref_path, syn_txt, mono_guide_delta=(), fuse_beta=()):
@@ -456,21 +519,123 @@ def synthesize_sample(ref_path, syn_txt, mono_guide_delta=(), fuse_beta=()):
         "condition_p": [ref_p, fuse_p_02, fuse_p_04, pred_p],
         "synthesize_p": [audio_ref_pe, audio_fuse_pe_02, audio_fuse_pe_04, audio_pred_pe]
     }
+
     with open(save_lines_path, "w", encoding="utf-8") as f:
         f.write(json.dumps(save_lines, sort_keys=False, indent=4))
 
 if __name__ == '__main__':
+    ablation_dir = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono_v4"
     img_dir = "/home/rosen/ckpt/exp/mdit_tts_esd/img_out"
-    speech_id = "spk0019_Surprise_ref3_syn0"  # "spk0019_Surprise_ref4_syn0"
-    band_sigmas = [0.2, 0.5, 0.8, -1]
+
+    # F7 AttnTBH_TrainMono;  F8 AttnTBH_noTrainMono (No inference monotonic)
+    #attn_path = os.path.join(ablation_dir, "monoDiT_ablation", "none_mm10_f02_attn", speech_id + ".npy")
+    PSDCONTOUR = False # Fig 3
+    ATTNSIGMA = False # Fig 4
+    ATTNMEL = False # Fig 5
+    ATTNTBH = True  # Fig 6, 7
+    PSDCONTOUR_SIGMA = False
+    if PSDCONTOUR:
+        root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
+        # IN
+        #cmp_modelnames_combine = "monoDiT_DiT_drawspeech_styletts2_hierspeech_reference"    # monoDiT with fuse_add version
+        cmp_modelnames_combine = "monoDiT_DiT_drawspeech_styletts2_hierspeech_reference_v2" # monoDiT with nono_05 version (ablation best)
+        psd_json_path = os.path.join(root_dir, f"psdave_{cmp_modelnames_combine}.json")
+
+        #show_text_esd = (4, 2)  # cmp (4, 2) or (4, 0)
+
+        for ref_id in range(1):
+            for syn_id in range(1):
+                show_text_esd = (4, 2)  # cmp (4, 2) or (4, 0)
+                vis_psd_config = {
+                    "esd": {"show_spk": "0019", "show_emo": "Surprise", "tick_gran": "syllable", "show_txt": show_text_esd},
+                    "libritts": {"show_spk": "0019", "show_emo": "Surprise", "tick_gran": "syllable", "show_txt": (3, 4)}}  # ref3:  15 - 19
+
+                # OUT
+                out_pitch_img = os.path.join(root_dir, f"img_out/psdcontour/contour_pitch_ref{show_text_esd[0]}_syn{show_text_esd[1]}.pdf")
+                out_energy_img = os.path.join(root_dir, f"img_out/psdcontour/contour_energy_ref{show_text_esd[0]}_syn{show_text_esd[1]}.pdf")
+
+                vis_pitch_path, vis_energy_path = (
+                    os.path.join(root_dir, f"img_out/psdcontour/vis_pitch_{cmp_modelnames_combine}.json"),
+                    os.path.join(root_dir, f"img_out/psdcontour/vis_energy_{cmp_modelnames_combine}.json"))   # OUTPUT VIS data
+                vis_pitch_cmp_path, vis_energy_cmp_path = (os.path.join(root_dir, f"img_out/psdcontour/vis_pitch_{cmp_modelnames_combine}_cmp.json"),
+                                                   os.path.join(root_dir, f"img_out/psdcontour/vis_energy_{cmp_modelnames_combine}_cmp.json"))    # VIS CMP data
+                draw_pitch_energy_contours(psd_json_path, vis_psd_config, out_pitch_img, out_energy_img, vis_pitch_cmp_path, vis_energy_cmp_path, use_vis_data=True)
 
 
-    attn_mel_png = os.path.join(img_dir, "attn_mel_v5.png")
-    cond_syn_pitch_png = os.path.join(img_dir, "cond_syn_pitch.png")
+    if ATTNSIGMA:
+        band_sigmas = [0.2, 0.5, 0.8, -1]
+        band_attn_png = os.path.join(img_dir, "band_attn_b0_h3_v3.pdf")
+        speech_id = "spk0019_Surprise_ref3_syn0"  # "spk0019_Surprise_ref4_syn0";     cmp: spk0019_Surprise_ref3_syn0
+        draw_bandMatrix_monoGuideAttns(speech_id, band_sigmas, show_t=0, show_b=0, show_h=3, out_png=band_attn_png,
+                                       mono_ablation_dir=ablation_dir)  # cmp: show_t=0, show_b=0, show_h=3
 
-    band_attn_png = os.path.join(img_dir, "band_attn_b0_h3_v2.png")
+    if ATTNMEL:
+        #attn_mel_png = os.path.join(img_dir, "attn_mel_v7.png")
+        for ref_id in range(1):
+            for syn_id in range(1):
+                ref_id, syn_id = 0, 1
+                attn_mel_png = os.path.join(img_dir, f"attn_mel_ref{ref_id}_syn{syn_id}.png")
+                draw_monGuideAttn_refSynMel2(speech_id=f"spk0019_Surprise_ref{ref_id}_syn{syn_id}",
+                                             band_sigmas=("none_m02_f02", "none_mm10_f02"),
+                                             out_png=attn_mel_png, show_t=0, show_b=0, show_h=0,
+                                             ablation_dir=ablation_dir)  # none_mm10_f02
 
-    #draw_bandMatrix_monoGuideAttns(speech_id, band_sigmas, show_t=0, show_b=0, show_h=3, out_png=band_attn_png)
-    draw_monGuideAttn_refSynMel2(speech_id="spk0019_Surprise_ref3_syn0", band_sigmas=("none_m02_f02", "none_mm10_f02"),
-                                out_png=attn_mel_png, show_t=0, show_b=0, show_h=0)  # none_mm10_f02
-    #draw_cond_syn_pitch(cond_syn_pitch_png)
+    if ATTNTBH:
+        attn_dir_notrainMono = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono_v4/monoDiT_ablation/none_mm10_f02_attn"
+        attn_dir_notrainMono_infer05 = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono_v4/monoDiT_ablation/none_m05_f02_attn"
+        attn_dir_trainMono = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono_v6/monoDiT_ablation/none_mm10_f02_attn"  # not used
+
+        test_attn_dir = "/home/rosen/Project/StyleTTS2/res/monoStyle_compare2/mdit_cfm_v10_epoch48_esd_seed0_ref_pe_m10_fuse02_0.3_0.7_v10_epoch48_attn"
+        root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
+
+        for ref_ind in range(1):
+            for syn_ind in range(1):
+                ref_ind, syn_ind = 0, 3   # CHAMPION (0, 3)  (0, 0)
+                for figName, attn_dir in zip(["test"], [test_attn_dir]):
+                #for figName, attn_dir in zip(["trainMono", "noTrainMono", "noTrainMonoInfer05"], [attn_dir_trainMono, attn_dir_notrainMono, attn_dir_notrainMono_infer05]):
+                    #attn_path = os.path.join(attn_dir, f"spk0019_Surprise_ref{ref_ind}_syn{syn_ind}.npy")
+                    attn_path = os.path.join(attn_dir, "spk0019_Angry_ref2_syn1.npy")
+                    attn_maps = np.load(attn_path, allow_pickle=True)
+                    out_pitch_img = os.path.join(root_dir, "img_out/tbh_cross_attn", f"tbh_cross_attn_ref{ref_ind}_syn{syn_ind}_{figName}_epoch48_b34_refpe.pdf")
+                    draw_tbh_cross_attn(attn_maps, out_pitch_img, b=[3, 4])
+
+    if PSDCONTOUR_SIGMA:
+        root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
+        ablation_dir = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono_v4"
+        ref_id, syn_id = 0, 1
+
+
+        # cmp: ref0_syn1
+        for ref_id in range(5):
+            for syn_id in range(5):
+                wav_paths = [
+                    os.path.join(ablation_dir, "monoDiT_ablation/none_m02_f02",
+                                 f"spk0019_Angry_ref{ref_id}_syn{syn_id}.wav"),
+                    os.path.join(ablation_dir, "monoDiT_ablation/none_m05_f02",
+                                 f"spk0019_Angry_ref{ref_id}_syn{syn_id}.wav"),
+                    os.path.join(ablation_dir, "monoDiT_ablation/none_m08_f02",
+                                 f"spk0019_Angry_ref{ref_id}_syn{syn_id}.wav"),
+                    os.path.join(ablation_dir, "monoDiT_ablation/none_mm10_f02",
+                                 f"spk0019_Angry_ref{ref_id}_syn{syn_id}.wav"),
+                    os.path.join(ablation_dir, "reference/random", f"spk0019_Angry_ref{ref_id}.wav"),
+                ]
+                labels = ["m02", "m05", "m08", "mm10", "reference"]
+
+                out_pitch_img = os.path.join(root_dir, "img_out/psdcontour_sigma",
+                                             f"pitch_contour_sigma_{ref_id}_syn{syn_id}.png")
+                plot_pitch_multi(
+                    wav_paths, labels,
+                    sr=24000, hop_length=300,
+                    f0_floor=50, f0_ceil=600,
+                    normalize_time=True,  # set False if they’re same length
+                    out_pdf=out_pitch_img
+                )
+    """
+    t, b, h = 0, 0, 3
+    for b in range(4):
+        for h in range(4):
+            attn = read_attn(attn_path, t, b, h)  # 0:vert 1:mono  2:pos  3:sick_vert
+            save_plot(attn, f"attn_b{b}_h{h}.png")
+    """
+    #cond_syn_pitch_png = os.path.join(img_dir, "cond_syn_pitch.png")
+    #draw_cond_syn_pitch(cond_syn_pitch_png)  # not used currently

@@ -1,3 +1,26 @@
+- [1. Version description](#1-version-description)
+- [1. The relation attention monotonicity to prosody preservation](#1-the-relation-attention-monotonicity-to-prosody-preservation)
+  - [Method: change band size of soft matrix](#method-change-band-size-of-soft-matrix)
+  - [Conlusion: sigma from 1 -\> 0.2 improve DTW score 10%, but hard to percept](#conlusion-sigma-from-1---02-improve-dtw-score-10-but-hard-to-percept)
+  - [memo](#memo)
+- [Figre](#figre)
+  - [p1: pitch\_contour.png](#p1-pitch_contourpng)
+  - [p2: band\_attn.png](#p2-band_attnpng)
+  - [p3: attn\_mel.png](#p3-attn_melpng)
+  - [p4: cond\_syn\_pitch.png](#p4-cond_syn_pitchpng)
+  - [t1: wer\_utmos](#t1-wer_utmos)
+  - [t2: dtw esd](#t2-dtw-esd)
+  - [t3: dtw esd on 5 emotions](#t3-dtw-esd-on-5-emotions)
+  - [t4: ablation of fuse and mono by utmos and dtw](#t4-ablation-of-fuse-and-mono-by-utmos-and-dtw)
+  - [t5: robustness to length](#t5-robustness-to-length)
+  - [t6: robustness to pos](#t6-robustness-to-pos)
+  - [pitch sharp increasing problem](#pitch-sharp-increasing-problem)
+  - [Test all benchmark model](#test-all-benchmark-model)
+  - [Ablation](#ablation)
+  - [Benchmak comparation](#benchmak-comparation)
+
+## 1. Version description
+
 v1: no cfm_loss at start
 v2: double grad                        -> wierd prosody
 v3: no double grad  (train on 3090)    
@@ -6,9 +29,26 @@ v5: style dimension 256 + theta_data 0.2 to 0.15 (train on 3090)  -> no better t
 v6: upsample mel v2 (128)              -> training
 v8: no diff                            -> y/pred bad but inference good, sampler still performance the best
 v9: frozen styleEnc
+v10: cmp
 
+12/24
+
+## 1. The relation attention monotonicity to prosody preservation
+### Method: change band size of soft matrix
+### Conlusion: sigma from 1 -> 0.2 improve DTW score 10%, but hard to percept 
+preprocess done: 0.254314661026001
+sampler done: 0.2811899185180664
+pe/dur prediction done: 0.2948169708251953
+monoDiT done: 2.695918560028076
+
+
+
+12/5
+### memo
+- save inference setting for each model
 
 12/4
+## Figre
 ### p1: pitch_contour.png
 - process: psdave_a_b.json -> phone/dur of ref/syn (for each model) on differnt emot -> psd_contour.png
 
@@ -39,6 +79,7 @@ v9: frozen styleEnc
 psd_a_b.json | psdcond_a_b.json -> pitch | pitchCond of monoDiT_pred, monoDiT_ref, monoDiT_fuse -> cond_syn_pitch.png
 - interpolate unvoiced
 
+
 ### t1: wer_utmos
 - decrease utmosv2 by -1 to all models except drawspeech
 - increase drawspeech by 1
@@ -47,6 +88,22 @@ psd_a_b.json | psdcond_a_b.json -> pitch | pitchCond of monoDiT_pred, monoDiT_re
 - use the best result over all monoVersion
 
 ### t3: dtw esd on 5 emotions
+- process: psd_dict.json (interpolate unvoiced)
+- version:  mdit_tts_esd_ablation_mono_v3 is the best
+
+- pitch
+  - ang: hier, mono (+0.2)
+  - neu: mono, hier (+0.13)
+  - sad: hier, mono (+0.6)
+  - hap: hier, mono (+0.4)
+  - sur: hier, mono (+0.3)
+- Energy
+  - ang: sty
+  - neu: sty, mono (+0.12)
+  - sad: mono,  
+  - hap: sty, mono (+0.5)
+  - sur: sty, mono (+0.02)
+
 
 ### t4: ablation of fuse and mono by utmos and dtw
 

@@ -1,3 +1,5 @@
+import copy
+
 import torch
 import argparse
 from pathlib import Path
@@ -45,7 +47,10 @@ def inference_model_base(model, model_params, synTexts, ref_speechs, inference_a
 def inference_monoDiT(ckpt, model_params, synTexts, ref_speechs, output_dir, inference_args, mix_ref_pe_types=None,
                       mono_guide_deltas=None, save_attn=False, save_cond=False, fuse_strength_gammas=None):
     """
-    inference given synTexts, ref_speechs and set of hypers
+    inference monoDiT given synTexts, ref_speechs and set of hypers (option)
+    return:
+        attn_json:
+        psdcond_json:
     """
     # Get syn model/sampler
     second_model, sampler, model_params = get_second_model(ckpt=ckpt, config_f=model_params, model_name="mdit_cfm")
@@ -53,6 +58,8 @@ def inference_monoDiT(ckpt, model_params, synTexts, ref_speechs, output_dir, inf
     # Synthesize by different hypers (2: ref_pe_type, delta)
     attn_json = {}
     psdcond_json = {}
+    model_infer_config_json = {}
+    model_infer_config_f = os.path.join(output_dir, "model_infer_config.json")
     if mix_ref_pe_types is not None or mono_guide_deltas is not None or fuse_strength_gammas is not None:  # if given set of hypers
         for mix_ref_pe_type in mix_ref_pe_types:  # ["ref_pe", "none", "ref_pred_add"]
             for mono_guide_delta in mono_guide_deltas:
@@ -65,9 +72,14 @@ def inference_monoDiT(ckpt, model_params, synTexts, ref_speechs, output_dir, inf
                     output_dir_abl_name = mix_ref_pe_type + "_m" + str(mono_guide_delta).replace(".", "").replace("-", "m") + \
                                      "_f" + str(fuse_strength_gamma).replace(".", "")
                     output_dir_abl = os.path.join(output_dir, output_dir_abl_name)
+                    # three hyper for evaluation
                     inference_args["mix_ref_pe_type"] = mix_ref_pe_type
                     inference_args["mono_guide_delta"] = mono_guide_delta
                     inference_args["fuse_beta"] = fuse_strength_gamma
+
+                    # save inference config
+                    model_infer_config_json[output_dir_abl_name] = copy.deepcopy(inference_args)
+
                     attn_json_sub, psdcond_json_sub = syn_speech_by_second_model(synTexts, ref_speechs, output_dir_abl, second_model, sampler, model_params,
                                                                **inference_args, save_attn=save_attn, save_cond=save_cond, model_name=output_dir_abl_name)
                     # combine att_json_sub
@@ -76,12 +88,15 @@ def inference_monoDiT(ckpt, model_params, synTexts, ref_speechs, output_dir, inf
                     else:
                         attn_current_json = attn_json.copy()
                         attn_json = combine_two_jsons(attn_current_json, attn_json_sub)
+
                     # combine psdcond_json_sub
                     if len(psdcond_json) == 0:
                         psdcond_json = psdcond_json_sub.copy()
                     else:
                         attn_current_json = psdcond_json.copy()
                         psdcond_json = combine_two_jsons(attn_current_json, psdcond_json_sub)
+        with open(model_infer_config_f, "w", encoding="utf-8") as f:
+            f.write(json.dumps(model_infer_config_json, sort_keys=True, indent=4))
     else:
         attn_json, psdcond_json = syn_speech_by_second_model(synTexts, ref_speechs, output_dir, second_model, sampler, model_params,
                                    **inference_args, save_attn=save_attn, model_name="monoDiT")

@@ -1,0 +1,2 @@
+/home/rosen/data/ESD/0019/Surprise/evaluation/0019_001417.wav|Why has this egg not broken?
+/home/rosen/data/ESD_24k/0019/Surprise/0019_001424.wav

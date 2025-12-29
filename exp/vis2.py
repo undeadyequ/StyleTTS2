@@ -173,31 +173,46 @@ def plot_mel_with_pitch(ax, title, speech, x_ltl_set, kwargs, show_pitch=False, 
     """
 
 
-def plot_mel_with_pitch2(ax, title, speech, x_ltl_set, kwargs,
-                        show_pitch=False, max_len=-1):
-
+def plot_mel_with_pitch2(
+    ax, title, speech, x_ltl_set, kwargs,
+    show_pitch=False, max_len=-1,
+    f0_min=50.0, f0_max=600.0   # 🔑 fixed pitch range
+):
     y, sr = librosa.load(speech, sr=None)
     hop_length, n_fft, n_mels = 300, 2048, 128
+    win_length, fmax = 1200, 8000
 
     ylabel, xticks, x_ticklabs = x_ltl_set
 
+    # --- Mel-spectrogram ---
     S = librosa.feature.melspectrogram(
         y=y, sr=sr,
         n_fft=n_fft, hop_length=hop_length,
-        n_mels=n_mels, fmax=8000,
-        win_length=1200
+        win_length=win_length,
+        n_mels=n_mels, fmax=fmax,
+        power=2.0
     )
     S_dB = librosa.power_to_db(S, ref=np.max)
-    S_dB = S_dB[:, :max_len] if max_len > 0 else S_dB
+
+    if max_len > 0:
+        S_dB = S_dB[:, :max_len]
 
     librosa.display.specshow(
-        S_dB, cmap="magma",
-        sr=sr, hop_length=hop_length,
-        fmax=8000, ax=ax
+        S_dB,
+        y_axis="mel",
+        fmax=fmax,
+        cmap="magma",
+        ax=ax
     )
 
     ax.set_title(title, pad=8)
+    ax.set_ylabel(ylabel if ylabel is not None else "")
 
+    # --- Fix x-limits to visible mel frames ---
+    n_frames = S_dB.shape[1]
+    ax.set_xlim(0, n_frames - 1)
+
+    # --- Custom x ticks (frame-based) ---
     ax.set_xticks(xticks)
     ax.set_xticklabels(
         x_ticklabs,
@@ -208,18 +223,32 @@ def plot_mel_with_pitch2(ax, title, speech, x_ltl_set, kwargs,
     ax.set_xlabel("")
 
     # Bold tick labels
-    if kwargs["xy_ticklabs_bold_index"][0] is not None:
+    if kwargs.get("xy_ticklabs_bold_index", (None, None))[0] is not None:
         x_bold, _ = kwargs["xy_ticklabs_bold_index"]
         for i, lab in enumerate(ax.get_xticklabels()):
             if i in x_bold:
                 lab.set_fontweight("bold")
 
-    # Draw pitch contour if needed
+    # --- Pitch contour (fixed y-range across figures) ---
     if show_pitch:
-        pitch, t = pw.dio(y.astype(np.float64), sr, frame_period=hop_length / sr * 1000)
-        pitch = pw.stonemask(y.astype(np.float64), pitch, t, sr)
-        times = librosa.times_like(pitch, sr=sr, hop_length=hop_length)
-        ax.plot(times, pitch, lw=1.2, color="cyan")
+        frame_period_ms = hop_length / sr * 1000.0
+        f0, t = pw.dio(y.astype(np.float64), sr, frame_period=frame_period_ms)
+        f0 = pw.stonemask(y.astype(np.float64), f0, t, sr)
+
+        if max_len > 0:
+            f0 = f0[:max_len]
+
+        x_frames = np.arange(len(f0))
+
+        ax_f0 = ax.twinx()
+        ax_f0.plot(x_frames, f0, lw=1.2, color="cyan")
+        ax_f0.set_xlim(0, n_frames - 1)
+
+        # 🔑 FIXED pitch scale for cross-figure comparison
+        ax_f0.set_ylim(f0_min, f0_max)
+        ax_f0.set_ylabel("F0 (Hz)")
+        ax_f0.tick_params(axis="y", labelsize=kwargs["fontsize"])
+        ax_f0.spines["right"].set_alpha(0.6)
 
 
 def plot_lines(ax, title, lines, labels, x_ltl_set, y_ltl_set):

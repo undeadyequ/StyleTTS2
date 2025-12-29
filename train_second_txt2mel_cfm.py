@@ -1,4 +1,5 @@
 # load packages
+import random
 import time
 import click
 import shutil
@@ -25,7 +26,6 @@ from utils import r1_reg, adv_loss
 import json
 from utilities.guide_mask import make_guided_attention_masks2
 
-
 # simple fix for dataparallel that allows access to class attributes
 class MyDataParallel(torch.nn.DataParallel):
     def __getattr__(self, name):
@@ -44,7 +44,7 @@ handler.setLevel(logging.DEBUG)
 logger.addHandler(handler)
 
 @click.command()
-@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm_v10.yml', type=str)
+@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm_v12.yml', type=str)
 def main(config_path):
     config = yaml.safe_load(open(config_path))
 
@@ -125,6 +125,8 @@ def main(config_path):
     model_params = recursive_munch(config['model_params'])
     multispeaker = model_params.multispeaker
     learn_monoAttn = model_params.learn_monoAttn
+    multiply_mono = model_params.multiply_mono
+
 
     model = build_model(model_params, config['cfm_config'], text_aligner, pitch_extractor, plbert)
     cfg_dropout = config['cfm_config'].get("cfg_dropout", 0)
@@ -362,14 +364,27 @@ def main(config_path):
             # CFM loss (after pe, diff training)
             optimizer.zero_grad()
             pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
-            loss_cfm, attn_maps = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s,
+
+            if multiply_mono:
+                mono_guide_delta = choose_mono_guide_delta()
+                if mono_guide_delta is None:
+                    regularize_attn_map = None
+                else:
+                    ilens = olens = [gt[i].size(-1) for i in range(gt.size(0))]
+                    regularize_attn_map = 1 - make_guided_attention_masks2(ilens, olens, base_sigma=mono_guide_delta, eps=0.002)     # diagonal:0, other:->1
+                    regularize_attn_map = regularize_attn_map.unsqueeze(1)
+                loss_cfm, attn_maps = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s, seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1),
+                                                                 regularize_attn_map=regularize_attn_map)
+            else:
+                loss_cfm, attn_maps = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s,
                                                              seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1))  #!! monoAttn loss is not used
             ### wait for test
             if learn_monoAttn:
                 blk, batch, head, ql, kl = attn_maps.shape
                 mask_delta = np.random.randint(2, 8) * 0.1  # (0, 0.8)
                 mel_len_for_guidance_matrix = torch.ones([len(mel_input_length), ]) * mel_len
-                guide_matrix = make_guided_attention_masks2(ilens=mel_len_for_guidance_matrix, olens=mel_len_for_guidance_matrix, max_len=ql, base_sigma=mask_delta, eps=0.002)  # (b, ilens_max, olens_max)
+                guide_matrix = make_guided_attention_masks2(ilens=mel_len_for_guidance_matrix, olens=mel_len_for_guidance_matrix,
+                                                            max_len=ql, base_sigma=mask_delta, eps=0.002)  # (b, ilens_max, olens_max)
                 guide_matrix = guide_matrix.unsqueeze(1).unsqueeze(0).repeat(blk, 1, head, 1, 1)
                 loss_monoAttn = torch.mean(attn_maps * guide_matrix)
             else:
@@ -420,7 +435,7 @@ def main(config_path):
                 #optimizer.step('style_encoder')
                 optimizer.step('decoder')
 
-                """Using it shows wierd prosody
+                """Using it shows wierd prosody (Double optimization)
                 # compute the gradient norm
                 total_norm = {}
                 for key in model.keys():
@@ -753,6 +768,17 @@ def log_grad_params(model):
             total_norm[key] += param_norm.item() ** 2
         total_norm[key] = total_norm[key] ** 0.5
     return total_norm
+
+def choose_mono_guide_delta():
+    u = random.random()
+    if u < 0.25:
+        return None
+    elif u < 0.5:
+        return 0.2
+    elif u < 0.75:
+        return 0.5
+    else:
+        return 0.8
 
 if __name__ == "__main__":
     main()

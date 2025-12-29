@@ -113,6 +113,33 @@ def extract_psdave(mel_config, cmp_modelnames, out_dir=None):
             prosody_dict[spk][emo_id][model_n]["speechid"].append(speech.split(".")[0])
     return prosody_dict
 
+def extract_psd_fine_class2(mel_config, out_speech_dir, model_n="unkown", save_psd_file="", prosody_dict=dict(), fine_cate="fine"):
+    pitch_extractor = PitEngExtractor(**asdict(mel_config()), need_energy=True)
+    speech_list = [speech for speech in os.listdir(out_speech_dir) if speech.endswith(".wav")]
+    if len(prosody_dict.keys()) == 0:
+        prosody_dict = {}
+    for speech in speech_list:
+        speech_f = os.path.join(out_speech_dir, speech)
+        spk, emo_id = speech.split("_")[:2]
+        wav = load_audio(speech_f, device=device)
+        prosody_dict.setdefault(spk, {})
+        prosody_dict[spk].setdefault(emo_id, {})
+        prosody_dict[spk][emo_id].setdefault(model_n, {})
+        prosody_dict[spk][emo_id][model_n].setdefault(fine_cate, {"pitch": [], "energy": [], "speechid": []})
+        try:
+            pitch, energy = pitch_extractor.forward(wav)  # [2, time // hop_length]
+        except IOError:
+            pitch, energy = torch.zeros(1), torch.zeros(1)
+            print("{} is failed to extract psd".format(speech_f))
+        prosody_dict[spk][emo_id][model_n][fine_cate]["pitch"].append(pitch.tolist())
+        prosody_dict[spk][emo_id][model_n][fine_cate]["energy"].append(energy.tolist())
+        prosody_dict[spk][emo_id][model_n][fine_cate]["speechid"].append(speech.split(".")[0])
+    # save psd json
+    if len(save_psd_file) != 0:
+        with open(save_psd_file, "w", encoding="utf-8") as f:
+            f.write(json.dumps(prosody_dict, sort_keys=True, indent=4))
+    return prosody_dict
+
 
 def extract_psd_fine_class(mel_config, model_name1, model_name2=None, out_dir=None, fine_categ_labels=("")):
     """
@@ -182,7 +209,6 @@ def extract_psd_fine_class(mel_config, model_name1, model_name2=None, out_dir=No
                 prosody_dict[spk][emo_id][model_n][fine_label]["energy"].append(energy.tolist())
                 prosody_dict[spk][emo_id][model_n][fine_label]["duration"].append(duration)
                 prosody_dict[spk][emo_id][model_n][fine_label]["speechid"].append(speech.split(".")[0])
-
     return prosody_dict
 
 def extract_psd_from_speech_tgt(speech_f, tgt_f, out_dir, average_phoneme=True, save_npy=False, mel_config=None):

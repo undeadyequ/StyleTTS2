@@ -16,8 +16,8 @@
 
 
 ### Style sampler
-- the s_pred is highly related to text for garuanteen stableness (no strange style coming?)
-- Process: noise ->(sin_emb) ->add(spk?) ->duplicate ->concat(bert_dur) ->transformer(ref) ->adapt_ave_pool
+- **Target**: Stablize acoustic and prosodic embedding conditioned on text
+- **Process**: noise ->(sin_emb) ->add(spk?) ->duplicate ->concat(bert_dur) ->transformer(ref) ->adapt_ave_pool
 - Hyper
   - embedding_scale:  classifier-free guidance scale, The higher the scale, the more conditional the style.
   - embedding_mask_proba: ?

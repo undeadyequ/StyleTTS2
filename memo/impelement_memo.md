@@ -1,3 +1,11 @@
+
+12/27
+1. create r_sharp_up.txt (10), r_sharp_turn.txt (10), s.txt (10)
+2. synthesized by styleTTS2, and monoDiT on (a,b=0,0 or 0.3, 0.7)
+3. compute ctw and RMSE, draw (only pitch)
+
+
+
 10/27
 1. F0, Energy prediction values
    - F0_model = JDCNet(num_class=1, seq_len=192)

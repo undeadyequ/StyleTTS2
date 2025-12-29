@@ -49,8 +49,11 @@ class CFMDecoder(torch.nn.Module):
             self.fake_content = nn.Parameter(torch.zeros(1, asr_res_dim, 1))
             self.fake_pe = nn.Parameter(torch.zeros(1, pe_emb_dim, 1))
 
+        self.attn_cache = list()
+        self.t_count = list()
     @torch.no_grad()
-    def forward(self, mu, mask, n_timesteps, temperature=1.0, c=None, seq_style=None, p_mask=None, solver=None, cfg_strength=None, mono_guide_delta=0):
+    def forward(self, mu, mask, n_timesteps, temperature=1.0, c=None, seq_style=None, p_mask=None,
+                solver=None, cfg_strength=None, mono_guide_delta=0, return_attn_map=True):
         """Forward diffusion
         Args:
             mu (torch.Tensor): output of encoder
@@ -91,23 +94,31 @@ class CFMDecoder(torch.nn.Module):
         print_mono_guide_delta = str(mono_guide_delta).replace(".", "").replace("-", "m")
         save_plot(regularize_attn_map[0].detach().cpu(), f"monoMask_guassion_{print_mono_guide_delta}.png")
 
-
         # cfg control
         if cfg_strength is None:
             ### TODO-S: tempt code for returning attn_map of dit at t=0
-            _, attn_maps = self.estimator(t_span[0], z, mask=mask, mu=mu, c=c, seq_style=seq_style,
-                                          p_mask=p_mask, return_attn_map=True, regularize_attn_map=regularize_attn_map)  # for attn_maps
+            #_, attn_maps = self.estimator(t_span[0], z, mask=mask, mu=mu, c=c, seq_style=seq_style,
+            #                              p_mask=p_mask, return_attn_map=True, regularize_attn_map=regularize_attn_map)  # for attn_maps
             estimator = functools.partial(self.estimator, mask=mask, mu=mu, c=c, seq_style=seq_style,
-                                          p_mask=p_mask, return_attn_map=False, regularize_attn_map=regularize_attn_map) # for trajectory
+                                          p_mask=p_mask, return_attn_map=return_attn_map, regularize_attn_map=regularize_attn_map) # for trajectory
         else:
             if self.cfg_dropout <= 0:
                 raise IOError("cfg_dropout should bigger than 0 in training if you want cfg in inference!!!")
-            _, attn_maps = self.cfg_wrapper(t_span[0], z, mask=mask, mu=mu, c=c, cfg_strength=cfg_strength, seq_style=seq_style,
-                                            p_mask=p_mask, return_attn_map=True, regularize_attn_map=regularize_attn_map)
+
+            #_, attn_maps = self.cfg_wrapper(t_span[0], z, mask=mask, mu=mu, c=c, cfg_strength=cfg_strength, seq_style=seq_style,
+            #                                p_mask=p_mask, return_attn_map=True, regularize_attn_map=regularize_attn_map)
             estimator = functools.partial(self.cfg_wrapper, mask=mask, mu=mu, c=c, cfg_strength=cfg_strength, seq_style=seq_style,
-                                          p_mask=p_mask, return_attn_map=False, regularize_attn_map=regularize_attn_map)
+                                          p_mask=p_mask, return_attn_map=return_attn_map, regularize_attn_map=regularize_attn_map)
         ### TODO-B
         trajectory = odeint(estimator, z, t_span, method=solver, rtol=1e-5, atol=1e-5)
+
+        # clear t_count and save attn_maps
+        if len(self.attn_cache) != 0:
+            attn_maps = torch.stack(self.attn_cache).clone()
+            self.t_count, self.attn_cache = list(), list()
+        else:
+            attn_maps = None
+
         return trajectory[-1], attn_maps
     
     # cfg inference
@@ -121,12 +132,16 @@ class CFMDecoder(torch.nn.Module):
         #uncond_output = self.estimator(t, x, mask, fake_content, fake_speaker, None, None, return_attn_map)
 
         if return_attn_map:  # Only return attn_map
-            return None, cond_output[1]
+            self.t_count.append(t)
+            if len(self.t_count) == 1 or len(self.t_count) == 100 or len(self.t_count) == 200:  # attention save conditions
+                self.attn_cache.append(cond_output[1].squeeze())
+            output = uncond_output[0] + cfg_strength * (cond_output[0] - uncond_output[0])
+            return output
         else:
             output = uncond_output + cfg_strength * (cond_output - uncond_output)
             return output
 
-    def compute_loss(self, x1, mask, mu, c, seq_style=None, p_mask=None):
+    def compute_loss(self, x1, mask, mu, c, seq_style=None, p_mask=None, regularize_attn_map=None):
         """Computes diffusion loss
         Args:
             x1 (torch.Tensor): Target
@@ -170,7 +185,7 @@ class CFMDecoder(torch.nn.Module):
             mu = mu * cfg_mask + ~cfg_mask * self.fake_content.repeat(mu.size(0), 1, mu.size(-1))
             seq_style = seq_style * cfg_mask + ~cfg_mask * self.fake_pe.repeat(seq_style.size(0), 1, seq_style.size(-1))
 
-        estm_out, attn_maps = self.estimator(t.squeeze(), y, x_mask, mu, c, seq_style, p_mask)
+        estm_out, attn_maps = self.estimator(t.squeeze(), y, x_mask, mu, c, seq_style, p_mask, regularize_attn_map=regularize_attn_map)
         loss = F.mse_loss(estm_out, u, reduction="sum") / (torch.sum(x_mask) * u.size(1))
         #return loss, y
         #return loss, estm_out, attn_maps

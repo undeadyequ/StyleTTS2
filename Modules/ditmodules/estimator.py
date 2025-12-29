@@ -136,7 +136,8 @@ class Decoder(nn.Module):
             nn.init.constant_(block.block.adaLN_modulation[-1].weight, 0)
             nn.init.constant_(block.block.adaLN_modulation[-1].bias, 0)
 
-    def forward(self, t, x, mask, mu, c, seq_style=None, p_mask=None, return_attn_map=True, q_f_pos=None, k_f_pos=None, regularize_attn_map=None):
+    def forward(self, t, x, mask, mu, c, seq_style=None, p_mask=None, return_attn_map=True, q_f_pos=None, k_f_pos=None,
+                regularize_attn_map=None):
         """Forward pass of the DiT model.
 
         Args:

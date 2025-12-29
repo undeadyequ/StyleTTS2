@@ -116,7 +116,6 @@ def statcz_psd_mcd(prosody_dict, exclude_zero=False):
                     psd_ctw_res[spk][emo][model_n].append(psd_phone_sid["speechid"])
                     psd_mcd_stat_res[spk][emo][model_n].append(p_diffs_mean)
                     psd_mcd_stat_res[spk][emo][model_n].append(e_diffs_mean)
-
     # compute mean
     collector = {}
     for spk_data in psd_mcd_stat_res.values():
@@ -133,6 +132,91 @@ def statcz_psd_mcd(prosody_dict, exclude_zero=False):
             averaged = [mean(col) for col in zip(*values)]
             result[emotion][model] = averaged
     return psd_ctw_res, psd_mcd_stat_res, result
+
+
+def statcz_psd_mcd_fine_class2(prosody_dict, exclude_zero=False):
+    """
+    compute psd ctw, mcd, and staticize by mean over each (spk)/emo/model
+    Args:
+        prosody_dict:  {"spk": {"emo1": {"model1": {"psd/phone/speechid": [[], []]}}}}
+    Returns:
+        psd_ctw_res: {"spk": "emo1": {"model1": [[wav1_pitch_ctw, wav2_pitch_ctw, ...], [wav1_eng_ctw, wav2_eng_ctw, ...]]}}
+        psd_mcd_stat_res: {"spk": "emo1": {"model1": [[p_diff], [e_diff], [mcd_res]]}}
+        result: {"emo1": {"model1": [[p_diff], [e_diff], [mcd_res]]}}
+    """
+    # OUT
+    psd_mcd_stat_res = {}
+    psd_ctw_res = {}
+
+    mean_func = lambda x: np.mean(np.array(x))
+
+    for spk, emo_model_psd in prosody_dict.items():
+        if spk not in psd_mcd_stat_res.keys():
+            psd_mcd_stat_res[spk], psd_ctw_res[spk] = dict(), dict()
+        for emo, model_psd in emo_model_psd.items():
+            if emo not in psd_mcd_stat_res[spk].keys():
+                psd_mcd_stat_res[spk][emo], psd_ctw_res[spk][emo] = dict(), dict()
+            for model_n, fine_psd_phone_sid in model_psd.items():
+                if model_n != "reference":
+                    if model_n not in psd_mcd_stat_res[spk][emo].keys():
+                        psd_mcd_stat_res[spk][emo][model_n], psd_ctw_res[spk][emo][model_n] = dict(), dict()
+                        for fine_cate, psd_phone_sid in fine_psd_phone_sid.items():
+                            psd_mcd_stat_res[spk][emo][model_n][fine_cate], psd_ctw_res[spk][emo][model_n][fine_cate] = [], []
+
+                            wav_num = len(psd_phone_sid["pitch"])
+                            p_diffs = []
+                            e_diffs = []
+                            for i in range(wav_num):  # reference id not in order (model["pitch"]["i"] is not referenced from a["reference"]["pitch"]["i"])
+                                # get reference id
+                                ref_i = psd_phone_sid["speechid"][i].split("ref")[1].split("_")[0]
+
+                                ref_i_index = [i for i, v in enumerate(prosody_dict[spk][emo]["reference"][fine_cate]["speechid"]) if f"ref{ref_i}" in v]
+                                assert len(ref_i_index) == 1
+                                ref_i_index = ref_i_index[0]
+
+                                # deal with nan and 0
+                                syn_pitch_contour, ref_pitch_contour = (interpolate_nan(psd_phone_sid["pitch"][i]),
+                                                                        interpolate_nan(prosody_dict[spk][emo]["reference"][fine_cate]["pitch"][ref_i_index]))
+                                syn_energy_contour, ref_energy_contour = (interpolate_nan(psd_phone_sid["energy"][i]),
+                                                                          interpolate_nan(prosody_dict[spk][emo]["reference"][fine_cate]["energy"][ref_i_index]))
+                                if exclude_zero:
+                                    syn_pitch_contour, syn_energy_contour = interpolate_unvoiced(syn_pitch_contour, syn_energy_contour, rm_approach=False)
+                                    ref_pitch_contour, ref_energy_contour = interpolate_unvoiced(ref_pitch_contour, ref_energy_contour, rm_approach=False)
+                                #print("pitch diff", syn_pitch_contour[:30], ref_pitch_contour[:30])
+                                p_diff, _ = dtw_sim_score(syn_pitch_contour, ref_pitch_contour)
+                                e_diff, _ = dtw_sim_score(syn_energy_contour, ref_energy_contour)
+                                p_diffs.append(p_diff)
+                                e_diffs.append(e_diff)
+                            p_diffs_mean = mean_func(p_diffs)
+                            e_diffs_mean = mean_func(e_diffs)
+                            psd_ctw_res[spk][emo][model_n][fine_cate].append(p_diffs)
+                            psd_ctw_res[spk][emo][model_n][fine_cate].append(e_diffs)
+
+                            psd_ctw_res[spk][emo][model_n][fine_cate].append(psd_phone_sid["speechid"])
+                            psd_mcd_stat_res[spk][emo][model_n][fine_cate].append(p_diffs_mean)
+                            psd_mcd_stat_res[spk][emo][model_n][fine_cate].append(e_diffs_mean)
+
+    collector = {}
+    # Collect stats
+    for spk_data in psd_mcd_stat_res.values():
+        for emotion, emo_data in spk_data.items():
+            collector.setdefault(emotion, {})
+            for model, model_data in emo_data.items():
+                collector[emotion].setdefault(model, {})
+                for datatype, pe_list in model_data.items():
+                    collector[emotion][model].setdefault(datatype, [])
+                    collector[emotion][model][datatype].append(pe_list)
+    # Compute mean
+    output_dict = {}
+    for emotion, emo_data in collector.items():
+        output_dict[emotion] = {}
+        for model, model_data in emo_data.items():
+            output_dict[emotion][model] = {}
+            for datatype, values in model_data.items():
+                values = np.asarray(values)  # (num_speakers, 2)
+                output_dict[emotion][model][datatype] = values.mean(axis=0).tolist()
+
+    return psd_ctw_res, psd_mcd_stat_res, output_dict
 
 
 def interpolate_unvoiced(pitch, energy, rm_approach):
@@ -289,8 +373,8 @@ if __name__ == '__main__':
     from test_data import a1, b1
     from vis2 import draw_dtw
 
-    a1 = np.array(a1)
-    b1 = np.array(b1)
+    a1 = np.array(a)
+    b1 = np.array(b)
     a1 = interpolate_nan(a1)
     b1 = interpolate_nan(b1)
     a1 = a1[a1 > 0]
@@ -302,3 +386,8 @@ if __name__ == '__main__':
     ab_dist, best_path = dtw_sim_score(a1, b1)
     print(ab_dist)
     draw_dtw(a1, b1, best_path, output_png="res/dtw_spk19_ang_ref4_syn0.png")
+
+
+    from exp.main_piolot_test import normalized_dtw_1d
+    dtw_res2 = normalized_dtw_1d(a1, b1)
+    print(dtw_res2)

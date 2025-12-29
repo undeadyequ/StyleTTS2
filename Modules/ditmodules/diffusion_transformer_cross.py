@@ -127,7 +127,7 @@ class DiTConVBlockCross(nn.Module):
 
         # mlp
         x = x + gate_mlp * self.mlp(self.modulate(self.norm3(x.transpose(1, 2)).transpose(1, 2), shift_mlp, scale_mlp), x_mask)
-        #save_plot(attn_map[0, 0].detach().cpu(), "attn_map1.png")
+        #save_plot(attn_map[0, 0].detach().cpu(), "attn_map2.png")
         return x, attn_map
 
     @staticmethod

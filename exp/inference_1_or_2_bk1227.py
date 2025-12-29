@@ -378,9 +378,6 @@ def inference_second(text, ref_wav, model, sampler, model_params,
             pe = torch.cat([N_cond.unsqueeze(1), F0_cond.unsqueeze(1)], dim=1)
             mel_rec, attn_maps = model.decoder(mu=asr, mask=None, n_timesteps=200, temperature=1.0, c=ref, seq_style=pe, p_mask=None,
                                                cfg_strength=cfg_strength, mono_guide_delta=mono_guide_delta)
-
-            #mel_rec, attn_maps = model.decoder(mu=asr, mask=None, n_timesteps=200, temperature=1.0, c=ref, seq_style=pe, p_mask=None)
-
         else:
             print(f"{model_params.decoder.type} is not wrong")
 
@@ -512,7 +509,7 @@ if __name__ == '__main__':
                         "first_txt2mel_cfm_v4/epoch_2nd_00040.pth",
                         "first_txt2mel_cfm_v4/config_libritts_txt2mel_cfm_v4.yml"],
         "mdit_cfm_v6": ["", "",
-                        "first_txt2mel_cfm_v6/epoch_2nd_00036.pth",  # 36
+                        "first_txt2mel_cfm_v6/epoch_2nd_00036.pth",
                         "first_txt2mel_cfm_v6/config_libritts_txt2mel_cfm_v6.yml"],
 
         "mdit_cfm_v8": ["", "",
@@ -547,20 +544,12 @@ if __name__ == '__main__':
 
     # test txt
     if TEST_TEXT:
+        ### IN
+        style = "exp/data/r1_sharp_last.txt"  # r1_50 r1_target libri_r1, r1_test
+        txt = "exp/data/s1_10.txt"  # s1_5 s1_target  libri_s1, s1_test
         dataset = "esd"  # libritts esd
         slice_num = 0
-        seed = 0
-        style_dim = 256
-
-        ### IN
-        style = "exp/data/r1_test.txt"  # r1_50 r1_target libri_r1, r1_test, r1_sharp_last
-        txt = "exp/data/s1_test.txt"  # s1_5 s1_target  libri_s1, s1_test, s1_10
-        mono_guide_delta = -1.0
-        fuse_beta = 0.2
-        mix_ref_pe_type = "ref_pe"  # mix reference pitch/energy style: "none, ref_pred_gate, ref_pred_add, ref_pe"
-        cfg_strength = 3
-        alpha = 0.3  # acoustic style. 1. use diffusion, 0: use encoding
-        beta = 0.7   # prosodic style. 1. use diffusion, 0: use encoding
+        seed = 2
 
         ### OUT
         #out_dir = "/home/rosen/StableTTS/exp/styletts2/random_10"
@@ -573,29 +562,66 @@ if __name__ == '__main__':
             synTexts = synTexts[:slice_num]
 
         # get model
-        model_name = "mdit_cfm_v10"  # "styletts2_txt2mel"  "mdit_cfm"  "mdit_cfm_v10"
+        model_name = "mdit_cfm_v10"  # "styletts2_txt2mel"  "mdit_cfm"
         second_model_path, second_config = model_root_dir + model_config[model_name][2], model_root_dir + model_config[model_name][3]
         second_model, sampler, model_params = get_second_model(ckpt=second_model_path, config_f=second_config, model_name=model_name)
 
+        ## Cond types
+        """
+        
+        glb_types = ["acoEnc_glb", "acoDiff_glb", "mix_glb"]
+        prd_types = ["psdEnc_psd", "psdDiff_psd", "mix_psd"]
 
+        glb_types = ["mix_glb"]
+        prd_types = ["mix_psd"]
+        """
         test_type = "monoStyle_compare2"  # monoStyle_compare  fuse_cond_test
+
+        #pe_types = ["gd_pe", "psdEnc_pe", "psdDiff_pe", "mix_pe", "ref_aware_pred_pe", "ref_pe"]  # NOT USED
+        #dur_types = ["gd_dur", "psdEnc_dur", "psdDiff_dur", "mix_dur"]                            # NOT USED
+
+        alpha_dict = {"acoEnc_glb": 0, "acoDiff_glb": 1, "mix_glb": 0.8} # weight of using acoustic Diffusion
+        beta_dict = {"psdEnc_psd": 0, "psdDiff_psd": 1, "mix_psd": 0.8}  # weight of using predicting Diffusion
+
+        # Choose condition
+        #glb_type = "acoDiff_glb"    # global style
+        #prd_type = "psdDiff_psd"    # predict style  "stylediff"  "styleEnc"
+
         #if mix_ref_pe_type == "ref_pred_add":
         #    psd_cond_args = {tau=0.15, beta=0.8, threshold=0.1, smooth_sigma=1.2, smooth_kernel=9, mask_kernel=9, mask_sigma=1.5, post_smooth=False}
 
-        torch.manual_seed(seed)
-        epoch_n = second_model_path.split(".")[0][-2:]
+        cfg_strength = 3 if model_name in ["mdit_cfm_v10"] else None
+        for seed in [0]:
+            torch.manual_seed(seed)
+            #for glb_type, prd_type in zip(glb_types, prd_types):
+            #alpha = alpha_dict[glb_type]
+            #beta = beta_dict[prd_type]
 
-        # OUT
-        fuse_beta_str = str(fuse_beta).replace(".", "")
-        mono_guide_delta_str = str(mono_guide_delta).replace(".", "").replace("-", "m")
-        out_dir = f"res/{test_type}/{model_name}_epoch{epoch_n}_{dataset}_seed{seed}_{mix_ref_pe_type}_{mono_guide_delta_str}_fuse{fuse_beta_str}_{alpha}_{beta}_v10_epoch48_head2"
-        #out_dir = f"/home/rosen/Project/StyleTTS2/res/piolot_test/monoDiT/sharpLastPreserve_alpha{alpha}_beta{beta}_mono02"   # piolet test
+            epoch_n = second_model_path.split(".")[0][-2:]
+            #style_dim = 512 if model_name in ["mdit_cfm_v5", "mdit_cfm_v3"] else 256
 
-        syn_speech_by_second_model(synTexts, syn_styles, out_dir, second_model=second_model, sampler=sampler, model_params=model_params, reference_dir=f"reference_{dataset}",
-                                   alpha=alpha, beta=beta,                          # condition args (alpha, beta)
-                                   mix_ref_pe_type=mix_ref_pe_type, fuse_beta=fuse_beta, mono_guide_delta=mono_guide_delta, cfg_strength=cfg_strength,  #  monoDiT args (fuse_mono_cfg)
-                                   Vis_F0=False, save_attn=True, attn_filter=None)  # output pattern
-        # Save utmos_v2 score
-        mean_mos, std_mos, mos_list = run_utmos(out_dir, 1)
-        print(f"\nAverage UTMOS-v2: {mean_mos:.4f} ± {std_mos:.4f}")
-        append_sentence_to_file("exp/utmosv2_log.txt", f"Average UTMOS-v2 of {out_dir}: {mean_mos:.4f} ± {std_mos:.4f}")
+            ## IN
+            style_dim = 256
+            mono_guide_delta = -1.0
+            fuse_beta = 0.2
+            mix_ref_pe_type = "none"  # mix reference pitch/energy style: "none, ref_pred_gate, ref_pred_add, ref_pe"
+
+            # alpha = acoustic style. 1. use diffusion, 0: use encoding
+            # beta = prosodic style. 1. use diffusion, 0: use encoding
+            alpha, beta = 0, 0.7   # 0.8, 0.8
+
+            # OUT
+            fuse_beta_str = str(fuse_beta).replace(".", "")
+            mono_guide_delta_str = str(mono_guide_delta).replace(".", "").replace("-", "m")
+            out_dir = f"res/{test_type}/{model_name}_epoch{epoch_n}_{dataset}_seed{seed}_{mix_ref_pe_type}_{mono_guide_delta_str}_fuse{fuse_beta_str}_{alpha}_{beta}_sepDurProsody"
+            #out_dir = f"/home/rosen/ckpt/exp/mdit_tts_{dataset}/monoDiT/random"
+
+            syn_speech_by_second_model(synTexts, syn_styles, out_dir, second_model=second_model, sampler=sampler,
+                                       model_params=model_params, alpha=alpha, beta=beta, style_dim=style_dim,
+                                       mix_ref_pe_type=mix_ref_pe_type, reference_dir=f"reference_{dataset}",
+                                       cfg_strength=cfg_strength, diffusion_steps=10, embedding_scale=1, mono_guide_delta=mono_guide_delta,  # inference args
+                                       Vis_F0=False, fuse_beta=fuse_beta, save_attn=True, attn_filter=None)
+            # Save utmos_v2 score
+            mean_mos, std_mos, mos_list = run_utmos(out_dir, 1)
+            print(f"\nAverage UTMOS-v2: {mean_mos:.4f} ± {std_mos:.4f}")
+            append_sentence_to_file("exp/utmosv2_log.txt", f"Average UTMOS-v2 of {out_dir}: {mean_mos:.4f} ± {std_mos:.4f}")
