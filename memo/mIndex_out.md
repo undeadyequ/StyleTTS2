@@ -1,0 +1,56 @@
+
+
+
+```commandline
+import torch
+print("Min, Q25, Q75, Max of F0 of pred_psd",
+      torch.min(seq_style[0, 1, :]).item(),
+      torch.quantile(seq_style[0, 1, :], 0.25).item(),
+      torch.quantile(seq_style[0, 1, :], 0.75).item(),
+      torch.max(seq_style[0, 1, :]).item(),
+      )
+print("Min, Q25, Q75, Max of N of pred_psd",
+      torch.min(seq_style[0, 0, :]).item(),
+      torch.quantile(seq_style[0, 0, :], 0.25).item(),
+      torch.quantile(seq_style[0, 0, :], 0.75).item(),
+      torch.max(seq_style[0, 0, :]).item(),
+      )
+
+print("Min, Q25, Q75, Max of F0 of gt_psd",
+      torch.min(seq_style_gt[0, 1, :]).item(),
+      torch.quantile(seq_style_gt[0, 1, :], 0.25).item(),
+      torch.quantile(seq_style_gt[0, 1, :], 0.75).item(),
+      torch.max(seq_style_gt[0, 1, :]).item()
+      )
+print("Min, Q25, Q75, Max of N of gt_psd",
+      torch.min(seq_style_gt[0, 0, :]).item(),
+      torch.quantile(seq_style_gt[0, 0, :], 0.25).item(),
+      torch.quantile(seq_style_gt[0, 0, :], 0.75).item(),
+      torch.max(seq_style_gt[0, 0, :]).item()
+      )
+```
+
+Min, Q25, Q75, Max of F0 of pred_psd -2.0961415767669678 -0.30165213346481323 263.7392272949219 292.5030822753906
+Min, Q25, Q75, Max of N of pred_psd -4.571564197540283 -2.9814934730529785 4.221543788909912 6.365911960601807
+Min, Q25, Q75, Max of F0 of gt_psd 0.012966334819793701 0.1406008005142212 281.35882568359375 372.2266540527344 
+Min, Q25, Q75, Max of N of gt_psd -5.109104156494141 -3.0689263343811035 2.8166098594665527 8.439437866210938
+
+Min, Q25, Q75, Max of F0 of pred_psd -0.9037225842475891 0.14435254037380219 71.78813171386719 109.48896789550781
+Min, Q25, Q75, Max of N of pred_psd -1.8660134077072144 -1.1767549514770508 6.655078887939453 8.191025733947754
+Min, Q25, Q75, Max of F0 of gt_psd 0.0010614991188049316 0.2143039107322693 79.14091491699219 197.83013916015625
+Min, Q25, Q75, Max of N of gt_psd -2.5465664863586426 -1.203524112701416 6.450784683227539 8.911809921264648
+
+Min, Q25, Q75, Max of F0 of pred_psd -1.1318024396896362 121.61767578125 169.80084228515625 204.7884979248047
+Min, Q25, Q75, Max of N of pred_psd -1.588240146636963 0.5944911241531372 6.739010810852051 7.591026306152344
+Min, Q25, Q75, Max of F0 of gt_psd 0.014454901218414307 47.96244812011719 155.09677124023438 210.17372131347656
+Min, Q25, Q75, Max of N of gt_psd -1.91036057472229 0.49327552318573 6.518016815185547 8.310062408447266
+
+Min, Q25, Q75, Max of F0 of pred_psd -0.4920549988746643 103.76522827148438 132.08306884765625 150.96119689941406
+Min, Q25, Q75, Max of N of pred_psd 0.8250249624252319 4.3188042640686035 7.028378009796143 7.779026508331299
+Min, Q25, Q75, Max of F0 of gt_psd 0.5833441615104675 99.19205474853516 126.44924926757812 159.56072998046875
+Min, Q25, Q75, Max of N of gt_psd 0.37110745906829834 4.047486305236816 7.180624961853027 8.098515510559082
+
+Min, Q25, Q75, Max of F0 of pred_psd -1.921992301940918 0.49830520153045654 120.40669250488281 150.9061737060547
+Min, Q25, Q75, Max of N of pred_psd -4.495652198791504 -3.0794756412506104 5.097072601318359 6.608762264251709
+Min, Q25, Q75, Max of F0 of gt_psd 0.005291879177093506 0.3132002353668213 124.42103576660156 174.6517791748047
+Min, Q25, Q75, Max of N of gt_psd -5.61384391784668 -3.1388258934020996 4.575500965118408 6.546596527099609

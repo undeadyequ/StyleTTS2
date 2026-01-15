@@ -184,7 +184,7 @@ def combine_two_jsons(attn_model1, attn_model2):
     return combined_dict
 
 
-def replace_certain_key_value(original_dict_path, replacement_dict_path, replaced_dict_path, key_depth=2, key_name="monoDiT"):
+def replace_certain_key_value(original_dict_path, replacement_dict_path, replaced_dict_path="", key_depth=2, key_name="monoDiT"):
     """
     replace certain key from replacement dictionary to original dictionary
     """
@@ -200,9 +200,11 @@ def replace_certain_key_value(original_dict_path, replacement_dict_path, replace
                 if model == key_name and key_depth == 2:
                     replaced_dict[spk][emo][model] = replacement_dict[spk][emo][model]
 
-    with open(replaced_dict_path, 'w') as f:
-        json.dump(replaced_dict, f, indent=4)
+    if len(replaced_dict_path) != 0:
+        with open(replaced_dict_path, 'w') as f:
+            json.dump(replaced_dict, f, indent=4)
 
+    return replaced_dict
 
 def renew_dict(current_dict, old_dict):
     """ renew old dict with current dict (Only add model subdirectory of old dict when it is not in current dict ) 
@@ -520,6 +522,9 @@ def pad_a2b_left(a, b_length):
     a_new[pad_end:] = a
     return a_new
 
+def save_json(attn_dict, attn_json_path):
+    with open(attn_json_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(attn_dict, sort_keys=True, indent=4))
 
 def save_attn_dict(attn_dict, nested_keys, values):
     spk, emo, model_n = nested_keys

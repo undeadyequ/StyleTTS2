@@ -1,3 +1,131 @@
+# 
+
+
+)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+run into exception Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Epochs: 29
+
+
+
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 605, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+Validation loss: 0.254, Dur loss: 0.549, F0 loss: 2.945
+
+
+
+Loading '/home/rosen/ckpt/styletts/Vocoder/LibriTTS/g_00935000'
+Complete.
+Removing weight norm...
+Traceback (most recent call last):
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 846, in <module>
+    main()
+  File "/home/rosen/miniconda3/envs/styletts2/lib/python3.9/site-packages/click/core.py", line 1161, in __call__
+    return self.main(*args, **kwargs)
+  File "/home/rosen/miniconda3/envs/styletts2/lib/python3.9/site-packages/click/core.py", line 1082, in main
+    rv = self.invoke(ctx)
+  File "/home/rosen/miniconda3/envs/styletts2/lib/python3.9/site-packages/click/core.py", line 1443, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+  File "/home/rosen/miniconda3/envs/styletts2/lib/python3.9/site-packages/click/core.py", line 788, in invoke
+    return __callback(*args, **kwargs)
+  File "/home/rosen/Project/StyleTTS2/train_second_txt2mel_cfm_prosodyFusion.py", line 741, in main
+    gt_pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+RuntimeError: Sizes of tensors must match except in dimension 1. Expected size 114 but got size 142 for tensor number 1 in the list.
+
+Process finished with exit code 1
+
 ####### cfm
 ert loaded
 bert_encoder loaded

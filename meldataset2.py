@@ -110,7 +110,15 @@ class FilePathDataset(torch.utils.data.Dataset):
         data = self.data_list[idx]
         path = data[0]
         
-        wave, text_tensor, speaker_id = self._load_tensor(data)
+        wave, text_tensor, speaker_id, uv_mask = self._load_tensor2(data)
+        uv_mask = F.pad(uv_mask, (1, 1), "constant", 0)
+        # check if uv_mask is same as text_tensor
+        if text_tensor.size(-1) != uv_mask.size(-1):
+            print("txt size {} and uv size {} not matched on {}:".format(text_tensor.size(-1), uv_mask.size(-1), data[1]))
+            if uv_mask.size(-1) < text_tensor.size(-1):
+                uv_mask = F.pad(uv_mask, (0, 1), "constant", 0)
+            else:
+                uv_mask = uv_mask[:text_tensor.size(-1)]
         
         mel_tensor = preprocess(wave).squeeze()
         
@@ -137,7 +145,7 @@ class FilePathDataset(torch.utils.data.Dataset):
             text.append(0)
             ref_text = torch.LongTensor(text)
         
-        return speaker_id, acoustic_feature, text_tensor, ref_text, ref_mel_tensor, ref_label, path, wave
+        return speaker_id, acoustic_feature, text_tensor, ref_text, ref_mel_tensor, ref_label, path, wave, uv_mask
 
     def _load_tensor(self, data):
         wave_path, text, speaker_id = data
@@ -179,6 +187,33 @@ class FilePathDataset(torch.utils.data.Dataset):
 
         return mel_tensor, speaker_id
 
+    def _load_tensor2(self, data):
+        wave_path, text, speaker_id = data
+        speaker_id = int(speaker_id)
+        wave, sr = sf.read(osp.join(self.root_path, wave_path))
+        if wave.shape[-1] == 2:
+            wave = wave[:, 0].squeeze()
+        ###### TEMP code
+        # if sr != 24000:
+        #    wave = librosa.resample(wave, orig_sr=sr, target_sr=24000)
+        #    print(wave_path, sr)
+        if self.need_wav_norm:
+            wave = self.normalize_wav(wave)  # Wav norm is used in drawspeech.
+
+        wave = np.concatenate([np.zeros([5000]), wave, np.zeros([5000])], axis=0)
+
+        # extract uv_mask
+        voiced_mask = build_voiced_mask(text)
+
+        text = self.text_cleaner(text)
+
+        text.insert(0, 0)
+        text.append(0)
+
+        text = torch.LongTensor(text)
+
+        return wave, text, speaker_id, voiced_mask
+
 
 class Collater(object):
     """
@@ -211,6 +246,7 @@ class Collater(object):
         mels = torch.zeros((batch_size, nmels, max_mel_length)).float()
         texts = torch.zeros((batch_size, max_text_length)).long()
         ref_texts = torch.zeros((batch_size, max_rtext_length)).long()
+        uv_masks = torch.zeros((batch_size, max_text_length)).float()
 
         input_lengths = torch.zeros(batch_size).long()
         ref_lengths = torch.zeros(batch_size).long()
@@ -220,13 +256,15 @@ class Collater(object):
         paths = ['' for _ in range(batch_size)]
         waves = [None for _ in range(batch_size)]
         
-        for bid, (label, mel, text, ref_text, ref_mel, ref_label, path, wave) in enumerate(batch):
+        for bid, (label, mel, text, ref_text, ref_mel, ref_label, path, wave, uv_mask) in enumerate(batch):
             mel_size = mel.size(1)
             text_size = text.size(0)
             rtext_size = ref_text.size(0)
+            uv_mask_size = uv_mask.size(0)
             labels[bid] = label
             mels[bid, :, :mel_size] = mel
             texts[bid, :text_size] = text
+            uv_masks[bid, :uv_mask_size] = uv_mask
             ref_texts[bid, :rtext_size] = ref_text
             input_lengths[bid] = text_size
             ref_lengths[bid] = rtext_size
@@ -238,7 +276,7 @@ class Collater(object):
             ref_labels[bid] = ref_label
             waves[bid] = wave
 
-        return waves, texts, input_lengths, ref_texts, ref_lengths, mels, output_lengths, ref_mels
+        return waves, texts, input_lengths, ref_texts, ref_lengths, mels, output_lengths, ref_mels, uv_masks
 
 
 def build_dataloader(path_list,
@@ -299,10 +337,7 @@ def build_voiced_mask(phonemes_list):
     # ----------------------------
     # 2. Phoneme-level voiced flags
     # ----------------------------
-    voiced_ph_flag = torch.tensor(
-        [1.0 if ph in voiced_ipa else 0.0 for ph in phonemes_list],
-        device=p2f_attn.device
-    )  # [N_p]
+    voiced_ph_flag = torch.tensor([1.0 if ph in voiced_ipa else 0.0 for ph in phonemes_list])  # [N_p]  device=phonemes_list.device
 
     # ----------------------------
     # 3. Project to frame-level mask

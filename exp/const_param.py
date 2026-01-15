@@ -97,3 +97,127 @@ wav_dict = {
     "Neutral": "0015_000065.npy",
     "Happy": "0015_000765.npy"
 }
+
+model_meta = {
+        "styletts2": ["/home/rosen/ckpt/styletts2_libriTTS", "epochs_2nd_00020.pth", "config.yml"],
+        "styletts2_txt2mel": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel/epoch_2nd_00028.pth", "first_txt2mel/config_libritts_txt2mel.yml"],
+        "drawspeech": ["root_dir", "", ""],
+        "hierspeech": ["", ""],
+        "DiT": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_dit_v1/epoch_2nd_00048.pth", "first_txt2mel_cfm_dit_v1/config_libritts_txt2mel_cfm_dit_v1.yml"],
+        # monoDiT multi version
+        "monoDiT": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
+        "monoDiT_ab0307": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
+        "monoDiT_ab0007": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth",
+                       "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
+        "monoDiT_ab0000": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth",
+                           "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
+        "decoDiT_v16": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v16/epoch_2nd_00020.pth", "first_txt2mel_cfm_v16/config_libritts_txt2mel_cfm_v16.yml"],
+        "monoDiT_ab0808_m08_fb03": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
+        "monoDiT_ab0307_m08_fb03": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
+        "monoDiT_ab0808_m08_fbnone": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"]
+}
+
+model_infer_config = {
+        "styletts2": {
+            "alpha": 0.8,
+            "beta": 0.8,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+        },
+        "DiT": {
+            "alpha": 1,
+            "beta": 1,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # hyper
+            "cfg_strength": 3,
+            "mono_guide_delta": -1.0,  # monoDiT
+            "Vis_F0": False,
+            "fuse_beta": 0.3     # reference aware
+        },
+        "styletts2_txt2mel": {},
+        "drawspeech": {},
+        "hierspeech": {},
+        "monoDiT": {
+            "alpha": 0.3,
+            "beta": 0.1,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "mono_guide_delta": -1.0,
+            "Vis_F0": True,
+            "fuse_beta": 0.3
+        },
+        "monoDiT_ab0307": {
+            "alpha": 0.3,
+            "beta": 0.7,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "mono_guide_delta": 0.8,
+            "Vis_F0": False,
+            "fuse_beta": 0.3
+        },
+        "monoDiT_ab0007": {
+            "alpha": 0,
+            "beta": 0.7,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "mono_guide_delta": 0.8,
+            "Vis_F0": False,
+            "fuse_beta": 0.3
+        },
+        "monoDiT_ab0000": {
+            "alpha": 0,
+            "beta": 0,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "mono_guide_delta": -0.1,
+            "Vis_F0": False,
+            "fuse_beta": 0.3
+        },
+        "decoDiT_v16": {
+            "alpha": 0.3,
+            "beta": 0.7,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "cfg_strength": 3,
+            "Vis_F0": False,
+        },
+        "monoDiT_ab0808_m08_fb03": {
+            "alpha": 0.8,
+            "beta": 0.8,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "ref_pred_add",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "mono_guide_delta": 0.8,
+            "Vis_F0": False,
+            "fuse_beta": 0.3
+        },
+
+        "monoDiT_ab0808_m08_fbnone": {
+            "alpha": 0.8,
+            "beta": 0.8,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "mono_guide_delta": 0.8,
+            "Vis_F0": False,
+            "fuse_beta": 0.3
+        },
+}

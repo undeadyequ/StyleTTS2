@@ -44,7 +44,7 @@ handler.setLevel(logging.DEBUG)
 logger.addHandler(handler)
 
 @click.command()
-@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm_v19.yml', type=str)
+@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm_v13.yml', type=str)
 def main(config_path):
     config = yaml.safe_load(open(config_path))
 
@@ -125,8 +125,8 @@ def main(config_path):
     model_params = recursive_munch(config['model_params'])
     multispeaker = model_params.multispeaker
     learn_monoAttn = model_params.learn_monoAttn
-    multiply_mono = model_params.get("multiply_mono", False)
-    cond_ref = model_params.get("cond_ref", False)
+    multiply_mono = model_params.multiply_mono
+    prosody_type = model_params.prosody_type
 
 
     model = build_model(model_params, config['cfm_config'], text_aligner, pitch_extractor, plbert)
@@ -365,11 +365,8 @@ def main(config_path):
             # CFM loss (after pe, diff training)
             optimizer.zero_grad()
 
-            if cond_ref:
-                pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
-            else:
-                pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
-
+            # set default loss
+            loss_et, loss_monoAttn = 0, 0
             if multiply_mono:
                 mono_guide_delta = choose_mono_guide_delta()
                 if mono_guide_delta is None:
@@ -381,8 +378,29 @@ def main(config_path):
                 loss_cfm, attn_maps = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s, seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1),
                                                                  regularize_attn_map=regularize_attn_map)
             else:
-                loss_cfm, attn_maps = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s,
-                                                             seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1))
+                # prosody fusion
+                if prosody_type == "prosody_fusion":
+                    pe_gt = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+                    pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
+                elif prosody_type == "ref_prosody":
+                    pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+                    pe_gt = None
+                else:
+                    pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
+                    pe_gt = None
+
+                # decoder
+                decoder_out = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s,
+                                                             seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1), seq_style_gt=pe_gt)  #!! monoAttn loss is not used
+                if len(decoder_out) == 2:
+                    loss_cfm, attn_maps = decoder_out
+                else:
+                    loss_cfm, attn_maps, piRef_e_a_gap = decoder_out
+                    pi_ref_mean, pi_ref_min, pi_ref_max, at_min, at_mean, at_q25, at_q75, at_max, gap_mean, gap_q25, gap_q50, gap_q75, gap_indexQ75, m = piRef_e_a_gap
+                    #rho = 0.3
+                    #loss_et = (et_mean - rho) ** 2
+
+
             ### wait for test
             if learn_monoAttn:
                 blk, batch, head, ql, kl = attn_maps.shape
@@ -392,8 +410,7 @@ def main(config_path):
                                                             max_len=ql, base_sigma=mask_delta, eps=0.002)  # (b, ilens_max, olens_max)
                 guide_matrix = guide_matrix.unsqueeze(1).unsqueeze(0).repeat(blk, 1, head, 1, 1)
                 loss_monoAttn = torch.mean(attn_maps * guide_matrix)
-            else:
-                loss_monoAttn = 0
+
 
             # dur ce loss
             loss_ce = 0
@@ -420,6 +437,7 @@ def main(config_path):
                      loss_params.lambda_sty * loss_sty + \
                      loss_params.lambda_diff * loss_diff + \
                      loss_params.lambda_monoAttn * loss_monoAttn
+                     #loss_params.lambda_et * loss_et
 
             running_loss += loss_cfm
             g_loss.backward()
@@ -440,31 +458,14 @@ def main(config_path):
                 #optimizer.step('style_encoder')
                 optimizer.step('decoder')
 
-                """Using it shows wierd prosody (Double optimization)
-                # compute the gradient norm
-                total_norm = {}
-                for key in model.keys():
-                    total_norm[key] = 0
-                    parameters = [p for p in model[key].parameters() if p.grad is not None and p.requires_grad]
-                    for p in parameters:
-                        param_norm = p.grad.detach().data.norm(2)
-                        total_norm[key] += param_norm.item() ** 2
-                    total_norm[key] = total_norm[key] ** 0.5
-                # gradient scaling
-                optimizer.step('bert_encoder')
-                optimizer.step('bert')
-                optimizer.step('predictor')
-                optimizer.step('diffusion')
-                """
-
             iters = iters + 1
 
             if (i + 1) % log_interval == 0:
                 logger.info(
-                    'Epoch [%d/%d], Step [%d/%d], Loss: %.5f, cfm Loss: %.5f, Dur Loss: %.5f, CE Loss: %.5f, Norm Loss: %.5f, F0 Loss: %.5f, Sty Loss: %.5f, Diff Loss: %.5f, monoAttn Loss: %.5f'
+                    'Epoch [%d/%d], Step [%d/%d], Loss: %.5f, cfm Loss: %.5f, Dur Loss: %.5f, CE Loss: %.5f, Norm Loss: %.5f, '
+                    'F0 Loss: %.5f, Sty Loss: %.5f, Diff Loss: %.5f, monoAttn Loss: %.5f'  # et Loss: %.5f
                     % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, running_loss / log_interval, loss_cfm,
-                       loss_dur, loss_ce, loss_norm_rec, loss_F0_rec, loss_sty, loss_diff, loss_monoAttn))
-
+                       loss_dur, loss_ce, loss_norm_rec, loss_F0_rec, loss_sty, loss_diff, loss_monoAttn))  # loss_et
                 writer.add_scalar('train/cfm_loss', running_loss / log_interval, iters)
                 writer.add_scalar('train/ce_loss', loss_ce, iters)
                 writer.add_scalar('train/dur_loss', loss_dur, iters)
@@ -473,6 +474,18 @@ def main(config_path):
                 writer.add_scalar('train/sty_loss', loss_sty, iters)
                 writer.add_scalar('train/diff_loss', loss_diff, iters)
                 writer.add_scalar('train/monoAttn', loss_monoAttn, iters)
+                #writer.add_scalar('train/et_loss', loss_et, iters)
+
+                # add prosody_fusion mIndex
+                if prosody_type == "prosody_fusion":
+                    logger.info(
+                        'pi_ref_mean: %.2f, pi_ref_min: %.2f, pi_ref_max: %.2f, at_min: %.2f, at_mean: %.2f, at_q25: %.2f, at_q75: %.2f, at_max: %.2f, '
+                        'gap_mean: %.2f, gap_q25: %.2f, gap_q50: %.2f, gap_q75: %.2f, gap_Indexq75: %r, m: %.2f' % (
+                            pi_ref_mean, pi_ref_min, pi_ref_max, at_min, at_mean, at_q25, at_q75, at_max, gap_mean, gap_q25, gap_q50, gap_q75, ",".join(map(str, gap_indexQ75.tolist()[:10])), m))
+                    writer.add_scalar('train/mean_p1_ref', pi_ref_mean, iters)
+                    #writer.add_scalar('train/mean_et', at_min, iters)
+                    writer.add_scalar('train/mean_at', at_mean, iters)
+                    writer.add_scalar('train/gap_mean', gap_mean, iters)
 
                 running_loss = 0
 
@@ -533,11 +546,8 @@ def main(config_path):
                     s_trg = torch.cat([s, gs], dim=-1).detach()
 
                     bert_dur = model.bert(texts, attention_mask=(~text_mask).int())
-                    d_en = model.bert_encoder(bert_dur).transpose(-1, -2)
-                    d, p = model.predictor(d_en, s,
-                                           input_lengths,
-                                           s2s_attn_mono,
-                                           text_mask)
+                    d_en = model.bert_encoder(bert_dur).transpose(-1, -2)  # semantic text (i.e., bert) embedding
+                    d, p = model.predictor(d_en, s, input_lengths, s2s_attn_mono, text_mask)  # pre_dur, gd_dur-extended bert embedding
                     # get clips
                     mel_len = int(mel_input_length.min().item() / 2 - 1)
                     en = []
@@ -566,8 +576,9 @@ def main(config_path):
                     F0_fake, N_fake = model.predictor.F0Ntrain(p_en, s)
 
                     # gt F0, energy
-                    F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1))
-                    N_real = log_norm(gt.unsqueeze(1)).squeeze(1)
+                    with torch.no_grad():
+                        F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1))
+                        N_real = log_norm(gt.unsqueeze(1)).squeeze(1)
 
                     loss_dur = 0
                     for _s2s_pred, _text_input, _text_length in zip(d, (d_gt), input_lengths):
@@ -581,15 +592,29 @@ def main(config_path):
                                               _text_input[1:_text_length - 1])
 
                     loss_dur /= texts.size(0)
+
                     s = model.style_encoder(gt.unsqueeze(1))
 
-                    if cond_ref:
+                    if prosody_type == "prosody_fusion":
+                        pe_gt = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+                        pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
+                    elif prosody_type == "ref_prosody":
                         pe = torch.cat([N_real.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
+                        pe_gt = None
                     else:
                         pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
-
-                    loss_cfm, attn_maps = model.decoder.compute_loss(
-                        gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s, seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1))
+                        pe_gt = None
+                    decoder_out = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s,
+                                                             seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1),
+                                                             seq_style_gt=pe_gt)  # !! monoAttn loss is not used
+                    if len(decoder_out) == 2:
+                        loss_cfm, attn_maps = decoder_out
+                    else:
+                        loss_cfm, attn_maps, piRef_e_a_gap = decoder_out
+                        pi_ref_mean, pi_ref_min, pi_ref_max, at_min, at_mean, at_q25, at_q75, at_max, gap_mean, gap_q25, gap_q50, gap_q75, gap_indexQ75, m = piRef_e_a_gap
+                    #pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
+                    #loss_cfm, attn_maps = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s,
+                    #                                                 seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1))
 
                     F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1))
                     loss_F0 = F.l1_loss(F0_real, F0_fake) / 10
@@ -701,17 +726,30 @@ def main(config_path):
 
                     # encode prosody
                     en = (d.transpose(-1, -2) @ pred_aln_trg.unsqueeze(0).to(texts.device))
+                    # 1. Fake: pred given gt_dur * styleEnc;   2. Pred: Given pred_dur * stylediff; 3. Real: gt
                     F0_pred, N_pred = model.predictor.F0Ntrain(en, s)
 
-
                     cfg_strength = 3 if cfg_dropout > 0 else None
-                    if cond_ref:
-                        pe = torch.cat([N_real[bib].unsqueeze(0), F0_real[bib].unsqueeze(0)], dim=0).unsqueeze(0)
-                    else:
-                        pe = torch.cat([N_pred.unsqueeze(1), F0_pred.unsqueeze(1)], dim=1)  # N_pred: based on pred_dur by diffusion,  N_fake: based on gt_dur
 
-                    out, _ = model.decoder(mu=t_en[bib, :, :input_lengths[bib]].unsqueeze(0) @ pred_aln_trg.unsqueeze(0).to(texts.device),
-                                           mask=mask, n_timesteps=200, temperature=1.0, c=ref, seq_style=pe, p_mask=mask, cfg_strength=cfg_strength)
+                    if prosody_type == "prosody_fusion":
+                        pe_gt = torch.cat([N_real[bib].unsqueeze(0), F0_real[bib].unsqueeze(0)], dim=0).unsqueeze(0)
+                        pe = torch.cat([N_pred.unsqueeze(1), F0_pred.unsqueeze(1)], dim=1)   # (1, 2, L)
+                    elif prosody_type == "ref_prosody":
+                        pe = torch.cat([N_real[bib].unsqueeze(1), F0_real[bib].unsqueeze(1)], dim=0).unsqueeze(0)
+                        pe_gt = None
+                    else:
+                        pe = torch.cat([N_pred.unsqueeze(1), F0_pred.unsqueeze(1)], dim=1)
+                        pe_gt = None
+
+                    decoder_out = model.decoder(mu=t_en[bib, :, :input_lengths[bib]].unsqueeze(0) @ pred_aln_trg.unsqueeze(0).to(texts.device),
+                                           mask=mask, n_timesteps=200, temperature=1.0, c=ref, seq_style=pe, p_mask=mask, cfg_strength=cfg_strength,
+                                            seq_style_gt=pe_gt)
+                    if len(decoder_out) == 2:
+                        out, _ = decoder_out
+                    else:
+                        out, _, piRef_e_a_gap = decoder_out
+                        pi_ref_mean, pi_ref_min, pi_ref_max, at_min, at_mean, at_q25, at_q75, at_max, gap_mean, gap_q25, gap_q50, gap_q75, gap_indexQ75, m = piRef_e_a_gap
+
                     # add vocoder
                     out = out.squeeze()
                     out = generator(out.unsqueeze(0))

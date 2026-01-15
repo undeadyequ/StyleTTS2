@@ -322,7 +322,7 @@ def vis_psd_contour2(
       phoneme list when available.
     """
     model_rename_dict = {
-        "monoDiT": "monoDiT-TTS",
+        "monoDiT": "DeCoDiT-TTS",
         "styletts2": "StyleTTS2",
         "drawspeech": "Drawspeech",
         "DiT": "DiT-TTS",

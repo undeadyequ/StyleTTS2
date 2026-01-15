@@ -369,7 +369,8 @@ def plot_simple_mel(audio_path, out_path):
     plt.savefig(out_path)
 
 
-def plot_f0_comparison(F0_ref, F0_pred, F0_fused, title="Pitch Comparison", out_path="pitch_compare.png"):
+def plot_f0_comparison(F0_ref, F0_pred, F0_fused, title="Pitch Comparison", out_path="pitch_compare.png",
+                       labels=("Reference F₀", "Predicted F₀", "Fused F₀")):
     """
     Visualize reference, predicted, and fused F0 contours.
     F0_* can be 1-D torch tensors or numpy arrays.
@@ -387,9 +388,9 @@ def plot_f0_comparison(F0_ref, F0_pred, F0_fused, title="Pitch Comparison", out_
         F0_pred = np.interp(np.linspace(0,1,T), np.linspace(0,1,len(F0_pred)), F0_pred)
 
     plt.figure(figsize=(10, 4))
-    plt.plot(F0_pred,  label='Predicted F₀', color='blue',  linestyle='--', alpha=0.8)
-    plt.plot(F0_ref,   label='Reference F₀', color='green', linestyle=':',  alpha=0.8)
-    plt.plot(F0_fused, label='Fused F₀',     color='red',   linewidth=2.0)
+    plt.plot(F0_ref,   label=labels[0], color='green', linestyle=':',  alpha=0.8)
+    plt.plot(F0_pred,  label=labels[1], color='blue',  linestyle='--', alpha=0.8)
+    plt.plot(F0_fused, label=labels[2], color='red',   linewidth=2.0)
     plt.title(title)
     plt.xlabel("Frame index")
     plt.ylabel("Normalized F₀ (log or latent scale)")

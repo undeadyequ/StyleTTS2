@@ -16,7 +16,7 @@ from Modules.prosodymodules.prosody_fusion import FactorizedGateMoEProsodyFusion
 class CFMDecoder(torch.nn.Module):
     def __init__(self, noise_channels, cond_channels, hidden_channels, out_channels, filter_channels, n_heads, n_layers,
                  kernel_size, p_dropout, gin_channels, cross_attn, residual_dim=64, dim_in=512, cfg_dropout=0,
-                 official_dit=False, prosody_fusion=False):  # different DiT version
+                 official_dit=False, prosody_fusion=True, pe_min_max=(100, 200 , 1, 3)):  # different DiT version
         super().__init__()
         self.noise_channels = noise_channels
         self.cond_channels = cond_channels
@@ -40,7 +40,6 @@ class CFMDecoder(torch.nn.Module):
 
         self.pe_encode = nn.Sequential(ResBlk1d(2, residual_dim, normalize=True),
                                     ResBlk1d(residual_dim, pe_emb_dim, normalize=True))
-
         self.asr_res = nn.Sequential(
             weight_norm(nn.Conv1d(dim_in, asr_res_dim, kernel_size=3, padding=1)),  # keep same length of output
             nn.InstanceNorm1d(asr_res_dim, affine=True)
@@ -55,6 +54,27 @@ class CFMDecoder(torch.nn.Module):
 
         self.attn_cache = list()
         self.t_count = list()
+
+        if self.prosody_fusion:
+            self.n_bins = 24
+            self.emb_dim = 128
+            self.pe_min_max = tuple(pe_min_max)
+            self.pitch_bins = nn.Parameter(
+                torch.linspace(self.pe_min_max[0], self.pe_min_max[1], self.n_bins - 1),
+                requires_grad=False,
+            )
+            self.energy_bins = nn.Parameter(
+                torch.linspace(self.pe_min_max[2], self.pe_min_max[3], self.n_bins - 1),
+                requires_grad=False,
+            )
+            self.energy_embedding = nn.Embedding(self.n_bins, self.emb_dim)
+            self.pitch_embedding = nn.Embedding(self.n_bins, self.emb_dim)
+            self.conv_layer = nn.Conv1d(self.emb_dim, 128, 3, padding=1)
+            self.pe_phone_encode = nn.Sequential(ResBlk1d(self.emb_dim, residual_dim, normalize=True),
+                                                 ResBlk1d(residual_dim, pe_emb_dim, normalize=True))
+            self.proj = nn.Linear(2 * pe_emb_dim, pe_emb_dim)
+            self.gd_gate = nn.Parameter(torch.tensor(-6.0))  # sigmoid ~ 0.002 at start
+            self.VIS_PITCH_REAL_DISCRETE = True
 
     @torch.no_grad()
     def forward(self, mu, mask, n_timesteps, temperature=1.0, c=None, seq_style=None, p_mask=None,
@@ -79,14 +99,12 @@ class CFMDecoder(torch.nn.Module):
         # preprocess mu, seq_style, and t_span
         mu = F.interpolate(mu, scale_factor=2, mode="nearest")
         mu = self.asr_res(mu)
-        seq_style = self.pe_encode(seq_style)
 
         # prosody fusion
         if seq_style_gt is not None and self.prosody_fusion:
-            seq_style_gt = self.pe_encode(seq_style_gt)
-            seq_style, piRef_e_a_gap = self.prosody_fuser(mu.transpose(1, 2), c, seq_style.transpose(1, 2), seq_style_gt.transpose(1, 2),
-                                                          return_gates=True) # transpose for LN
-            seq_style = seq_style.transpose(1, 2)
+            seq_style = self.fuse_pe_pred_gd(seq_style, seq_style_gt)
+        else:
+            seq_style = self.pe_encode(seq_style)  # (B, d, T)  d =256
 
         z = torch.randn_like(mu) * temperature
         t_span = torch.linspace(0, 1, n_timesteps + 1, device=mu.device)
@@ -98,12 +116,7 @@ class CFMDecoder(torch.nn.Module):
         olens = [seq_style[i].size(-1) for i in range(seq_style.size(0))]
 
         # create regularize_attn_map
-        #regularize_attn_map = make_guided_attention_masks2(ilens, olens, max_len=max(ilens), base_sigma=mono_guide_delta, eps=0.002)  # diagonal:0, other:->1
         regularize_attn_map = make_guided_attention_masks2(ilens, olens, base_sigma=mono_guide_delta, eps=0.002)  # diagonal:0, other:->1
-        #inf_min = -torch.finfo(regularize_attn_map.dtype).max
-        #regularize_attn_map = torch.where(regularize_attn_map > 0.6, inf_min , torch.tensor(0.0))
-        #regularize_attn_map.masked_fill_(regularize_attn_map > 0.6, -torch.finfo(regularize_attn_map.dtype).max)
-        #regularize_attn_map.masked_fill_(regularize_attn_map <= 0.6, 0)
         regularize_attn_map = 1 - regularize_attn_map
         print_mono_guide_delta = str(mono_guide_delta).replace(".", "").replace("-", "m")
         save_plot(regularize_attn_map[0].detach().cpu(), f"monoMask_guassion_{print_mono_guide_delta}.png")
@@ -132,9 +145,6 @@ class CFMDecoder(torch.nn.Module):
             self.t_count, self.attn_cache = list(), list()
         else:
             attn_maps = None
-
-        if self.prosody_fusion:
-            return trajectory[-1], attn_maps, piRef_e_a_gap
         return trajectory[-1], attn_maps
 
     # cfg inference
@@ -158,7 +168,7 @@ class CFMDecoder(torch.nn.Module):
             return output
 
     def compute_loss(self, x1, mask, mu, c, seq_style=None, p_mask=None, regularize_attn_map=None,
-                     seq_style_gt=None):
+                     seq_style_gt=None, pe_stats=None):
         """Computes diffusion loss
         Args:
             x1 (torch.Tensor): Target
@@ -176,25 +186,19 @@ class CFMDecoder(torch.nn.Module):
         mu = F.interpolate(mu, scale_factor=2, mode="nearest")
         mu = self.asr_res(mu)
 
-        seq_style = self.pe_encode(seq_style)
-
+        # encoder/merge phoneme-level pe: discrete -> emb -> interpolate, smooth, concate, and mlp
         if seq_style_gt is not None and self.prosody_fusion:
-            seq_style_gt = self.pe_encode(seq_style_gt)
-            seq_style, piRef_e_a_gap = self.prosody_fuser(mu.transpose(1, 2), c, seq_style.transpose(1, 2), seq_style_gt.transpose(1, 2), # transpose for LN
-                                                          return_gates=True)
-            seq_style = seq_style.transpose(1, 2)
+            seq_style = self.fuse_pe_pred_gd(seq_style, seq_style_gt)
         else:
-            piRef_e_a_gap = None
-        b, _, t = mu.shape
+            seq_style = self.pe_encode(seq_style)  # (B, d, T)  d =256
 
-        # random timestep
+        # perturb mel given random t
+        b, _, t = mu.shape
         # use cosine timestep scheduler from cosyvoice: https://github.com/FunAudioLLM/CosyVoice/blob/main/cosyvoice/flow/flow_matching.py
         t = torch.rand([b, 1, 1], device=mu.device, dtype=mu.dtype)
         t = 1 - torch.cos(t * 0.5 * torch.pi)
-        
         # sample noise p(x_0)
         z = torch.randn_like(x1)
-
         y = (1 - (1 - self.sigma_min) * t) * z + t * x1
         u = x1 - (1 - self.sigma_min) * z
 
@@ -214,6 +218,48 @@ class CFMDecoder(torch.nn.Module):
         loss = F.mse_loss(estm_out, u, reduction="sum") / (torch.sum(x_mask) * u.size(1))
         #return loss, y
         #return loss, estm_out, attn_maps
-        if self.prosody_fusion:
-            return loss, attn_maps, piRef_e_a_gap
-        return loss, attn_maps         ######### TEMP
+        return loss, attn_maps
+
+    def fuse_pe_pred_gd(self, seq_style, seq_style_gt):
+        """
+        gt: discrete -> emb -> interp -> smooth -> concate -> pe_encoder -> proj
+        """
+        if False:
+            e_emb = torch.bucketize(seq_style_gt[:, 0, :], self.energy_bins)
+            #print("e_emb q25, q75", torch.quantile(e_emb[0].float(), q=0.25).item(), torch.quantile(e_emb[0].float(), q=0.75).item())
+            e_emb = self.energy_embedding(e_emb) # # (B, T, d/2)
+            e_emb = F.interpolate(e_emb.transpose(-1, -2), size=seq_style.size(-1), mode="linear", align_corners=True)
+            #e_emb = self.conv_layer(e_emb)  # (B, d/2, T)
+
+        # Do log first
+        #pitch_safe = torch.clamp(seq_style_gt[:, 1, :], min=eps)
+        #pitch_safe = torch.log(pitch_safe)
+        p_emb = torch.bucketize(seq_style_gt[:, 1, :], self.pitch_bins)  # (B, T)
+        if self.VIS_PITCH_REAL_DISCRETE and not self.training:
+            from exp.vis2 import plot_f0_comparison
+            show_num = min(5, seq_style_gt.size(0))
+            for i in range(show_num):
+                plot_f0_comparison(seq_style_gt[i, 1], p_emb[i], seq_style[i, 1],
+                                   out_path=f"res/temp/pitch_real_discrete_pred_{i}.png",
+                                   labels=("pitch_real", "pitch_discrete", "pitch_pred"))
+                plot_f0_comparison(seq_style_gt[i, 0], p_emb[i], seq_style[i, 0],
+                                   out_path=f"res/temp/energy_real_discrete_pred_{i}.png",
+                                   labels=("energy_real", "energy_discrete", "energy_pred"))
+            self.VIS_PITCH_REAL_DISCRETE = False
+        #print("p_emb q25, q75", torch.quantile(p_emb[0].float(), q=0.25).item(), torch.quantile(p_emb[0].float(), q=0.75).item())
+        p_emb = self.pitch_embedding(p_emb)
+        p_emb = F.interpolate(p_emb.transpose(-1, -2), size=seq_style.size(-1), mode="linear", align_corners=True)
+        #p_emb = self.conv_layer(p_emb)  # (B, d/2, T)
+
+        # encode
+        seq_style = self.pe_encode(seq_style)  # (B, d, T)  d =256
+        #seq_style_gt = self.pe_phone_encode(torch.cat((e_emb, p_emb), dim=1))  # (B, d, T)
+        seq_style_gt = self.pe_phone_encode(p_emb)  # (B, d, T)
+
+        # ----- gate (no-op at init) -----
+        gate = torch.sigmoid(self.gd_gate)  # scalar in (0,1)
+        seq_style_gt = gate * seq_style_gt
+
+        # fusion
+        seq_style = self.proj(torch.cat((seq_style, seq_style_gt), dim=1).transpose(-1, -2)).transpose(-1, -2)  # (B, d, T)
+        return seq_style

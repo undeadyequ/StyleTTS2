@@ -336,18 +336,18 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
     #attn_weight[:, :, tgt_enh_start:tgt_enh_start + tgt_enh_dur, ref_enh_start:ref_enh_start + ref_enh_dur] = 100
     #attn_weight = attn_weight * guide_matrix_mask
 
-    attn_weight *= attn_bias
+    ############ Test: Block works? ##############
+    #attn_weight *= attn_bias
     #attn_weight += attn_bias
-    attn_weight[0, [0, 1, 3], ...] = 0
+    #attn_weight[0, [0, 1, 3], ...] = 0
+    #attn_weight[:, :, ...] = 0
 
-    """
     if attn_mask_operation == "add":
         attn_weight += attn_bias
     elif attn_mask_operation == "multiply":
         attn_weight *= attn_bias
     else:
         raise IOError(f"{attn_mask_operation} not supported")
-    """
 
     #save_plot(attn_weight[0, 0].detach().cpu(), f"attn_before_monoMask.png")
     #attn_weight += attn_bias           ################# CHECK  : attn_weight += attn_bias

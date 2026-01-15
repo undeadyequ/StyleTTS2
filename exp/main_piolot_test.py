@@ -349,7 +349,6 @@ def main():
     model_csv = os.path.join(args.out_dir, "dtw_model.csv")
     df_model.to_csv(model_csv, float_format="%.6f")
     print(f"[Saved] {model_csv}")
-
     print(f"[Saved] pitch contour images -> {img_dir}")
     print(f"[Done] evaluated {len(df_speech)} utterances.")
 

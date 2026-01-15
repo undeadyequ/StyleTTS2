@@ -98,6 +98,7 @@ def fuse_prosody_smooth_additive(
     # 3. Preprocess reference F0 (remove unvoiced noise, smooth, then normalize)
     voiced_ref = (ref_pitch > 1e-3).float()
     ref_pitch_filled = fill_unvoiced_with_interp(ref_pitch, voiced_ref)
+    #print(ref_pitch, ref_pitch_filled)
     ref_pitch_smooth = smooth_pitch_gaussian(ref_pitch_filled, sigma=smooth_sigma, kernel_size=smooth_kernel)
     ref_pitch_smooth = ref_pitch_smooth * voiced_ref  # zero unvoiced again
     ref_pitch_norm = normalize_ref_pitch(ref_pitch_smooth, threshold)

@@ -1,27 +1,12 @@
 import copy
-
-import torch
-import argparse
-from pathlib import Path
-from typing import Any, Dict, Optional, List, Tuple, Literal
 from exp.exp_utils import (copy_ref_speech, fine_adjust_configs, get_synStyle_from_file, get_synText_from_file, renew_dict, combine_jsons, combine_two_jsons)
-from exp.vis_data_adaptor import convert_vis_psd_json, convert_attn_json, convert_attnEnh_json
-from exp.extract_psd import extract_psdave, extract_psd_fine_class, extract_psd
-from exp.visualization import vis_psd, vis_emo_crossAttn, vis_psd_enh, show_attn_map, show_two_attn_map, vis_mono_guide_mask, vis_dual_utmos_rmse
-from exp.statcz_psd import statcz_psd_mcd, statcz_psd_fine_mcd
-
-from vis_data_adaptor import adapt_mix_2d_r_m1_m2, adapt_attn_2d_block_model
-from vis2 import cst_attn_2d_block_model, cst_melattn_2d_type_model
-#from infer_exp import infer_exp
-from exp.mel_config import MelConfig          ################ BE CAREFUL; Must same with draw?.yaml #########
 from tqdm import tqdm
-from exp.exp_wer import evaluate_wer
-from utilities.guide_mask import make_guided_attention_masks2
-from utilities.vis import save_plot
 import shutil
 import sys, os, yaml, json
 from inference_1_or_2 import syn_speech_by_second_model, get_second_model
+from inference_decoTTS import syn_speech_by_second_model as syn_speech_by_second_model_deco, get_second_model as get_second_model_deco
 from inference_origin import syn_speech, get_styletts2_model
+
 
 mname_config = {
     "mdit_librittsesd_cutdurspn_pe": "drawspeech/config/mdit_librittsesd_cutdurspn_pe_infer.yaml",
@@ -43,6 +28,11 @@ monoDiT_inference_args = {
 def inference_model_base(model, model_params, synTexts, ref_speechs, inference_args, output_dir):
     pass
 
+def inference_decoDiT(ckpt, model_params, synTexts, ref_speechs, output_dir, inference_args, mix_ref_pe_types=None,
+                      mono_guide_deltas=None, save_attn=False, save_cond=False, fuse_strength_gammas=None):
+
+    get_second_model_deco()
+    return attn_json_sub, psdcond_json_sub
 
 def inference_monoDiT(ckpt, model_params, synTexts, ref_speechs, output_dir, inference_args, mix_ref_pe_types=None,
                       mono_guide_deltas=None, save_attn=False, save_cond=False, fuse_strength_gammas=None):
@@ -55,11 +45,11 @@ def inference_monoDiT(ckpt, model_params, synTexts, ref_speechs, output_dir, inf
     # Get syn model/sampler
     second_model, sampler, model_params = get_second_model(ckpt=ckpt, config_f=model_params, model_name="mdit_cfm")
 
-    # Synthesize by different hypers (2: ref_pe_type, delta)
+    # Synthesize by different hypers (2: ref_pe_type, monoDelta)
     attn_json = {}
     psdcond_json = {}
     model_infer_config_json = {}
-    model_infer_config_f = os.path.join(output_dir, "model_infer_config.json")
+    model_infer_config_f = os.path.join(output_dir, "model_infer_config.json")  # memo
     if mix_ref_pe_types is not None or mono_guide_deltas is not None or fuse_strength_gammas is not None:  # if given set of hypers
         for mix_ref_pe_type in mix_ref_pe_types:  # ["ref_pe", "none", "ref_pred_add"]
             for mono_guide_delta in mono_guide_deltas:
@@ -102,29 +92,6 @@ def inference_monoDiT(ckpt, model_params, synTexts, ref_speechs, output_dir, inf
                                    **inference_args, save_attn=save_attn, model_name="monoDiT")
     return attn_json, psdcond_json
 
-
-def inference_drawspeech(model, model_params, synTexts, ref_speechs, inference_args, output_dir):
-    # create infer_json_path
-    infer_json_path = os.path.join(output_dir, infer_json_name)
-    gd_speech_dir = os.path.join(output_dir, "gd_speech")
-
-    if not os.path.isfile(infer_json_path):
-        infer_json = get_infer_json(ref_speechs, synTexts, ref_json, gd_dir=gd_speech_dir)  # write ref/syn phoneme in infer.json
-        json.dump(infer_json, open(infer_json_path, "w"), indent=1, ensure_ascii=False)
-    else:
-        infer_json = json.load(open(infer_json_path, "r"))
-
-    ## exp_group_name, exp_name is used to locate ckpt
-    exp_name = os.path.basename(config_yaml.split(".")[0])
-    if exp_name.endswith("_infer"):
-        exp_name = exp_name[:-6]
-    exp_group_name = os.path.basename(os.path.dirname(config_yaml))
-    config_yaml_path = os.path.join(config_yaml)
-    config_yaml_dict = yaml.load(open(config_yaml_path, "r"), Loader=yaml.FullLoader)
-
-    _, attn_dict = infer_exp(infer_json, config_yaml_dict, config_yaml_path, exp_group_name, exp_name, syn_styles,
-                             synTexts, out_speech_dir, ref_speech_dir, out_attn_dir, batch_size=8,
-                             save_attn=save_attn)  # should output out_attn_dir and attn_json_path
 
 def inference_styletts2(ckpt, model_params, synTexts, ref_speechs, output_dir, inference_args):
     model, sampler, model_params = get_styletts2_model(ckpt=ckpt, config_f=model_params, model_name="styletts2")

@@ -1,0 +1,21 @@
+version,name,description,Intelligibility,Prosody,quality
+19,simplefuse,pitch_trend_as_input,,,
+18,hierstyle,pitch trend is concetenated with mlp,,,
+17,prosodyfuse,Gap-based gating to weight two prosody on different frame,,,
+16,,,,,
+15,,,,,
+14,,,,,
+13,,,,,
+12,,,,,
+11,,,,,
+10,cmp,use cfg on prosody condition,,,
+09,frozen styleEnc,,,,
+08,,,,,
+07,,,,,
+06,upsample_mel_v2,,,,
+05,,,,,
+04,styleDim128 ,,,,
+20,simplefuse_dim8,,0.3: unvoiced_bad,pitch_qk_change,bad_0.2
+21,,,,,
+22,simplefuse_resAdd,"resAdd_sigmoid, data_ratio=0.6, zero_init_residual, uv_mask_twice",good_0.9,burst_low_quality_0.2,0.8
+23,simplefuse_resAdd_v2,"data_ratio=1.0, no_gaussion_smooth",,,

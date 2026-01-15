@@ -31,6 +31,9 @@ from utilities.guide_mask import make_guided_attention_masks2
 from visualization import vis_matrix_attn, vis_matrix_attn2, vis_psd_contour2, vis_tbh_cross_attention, vis_tbh_cross_attention_time_grouped
 from itertools import accumulate
 from exec_draw_two_pitch import plot_pitch_multi
+from exec_histogram import plot_mean_f0_hist_kde_apsipa, extract_mean_f0_hist_kde_metadata, build_mean_pitch_dict
+from exp_utils import replace_certain_key_value
+
 
 model_config = {
         "mdit_cfm_v10": ["first_txt2mel_cfm_v10/epoch_2nd_00048.pth",
@@ -534,6 +537,7 @@ if __name__ == '__main__':
     ATTNMEL = False # Fig 5
     ATTNTBH = True  # Fig 6, 7
     PSDCONTOUR_SIGMA = False
+    HISTORGRAM = False
     if PSDCONTOUR:
         root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
         # IN
@@ -586,6 +590,7 @@ if __name__ == '__main__':
         attn_dir_trainMono = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono_v6/monoDiT_ablation/none_mm10_f02_attn"  # not used
 
         test_attn_dir = "/home/rosen/Project/StyleTTS2/res/monoStyle_compare2/mdit_cfm_v10_epoch48_esd_seed0_ref_pe_m10_fuse02_0.3_0.7_v10_epoch48_attn"
+        test_attn_dir = "/home/rosen/Project/StyleTTS2/res/hierstyle_test/mdit_cfm_v10_epoch48_esd_03_07_attn"
         root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
 
         for ref_ind in range(1):
@@ -596,14 +601,14 @@ if __name__ == '__main__':
                     #attn_path = os.path.join(attn_dir, f"spk0019_Surprise_ref{ref_ind}_syn{syn_ind}.npy")
                     attn_path = os.path.join(attn_dir, "spk0019_Angry_ref2_syn1.npy")
                     attn_maps = np.load(attn_path, allow_pickle=True)
-                    out_pitch_img = os.path.join(root_dir, "img_out/tbh_cross_attn", f"tbh_cross_attn_ref{ref_ind}_syn{syn_ind}_{figName}_epoch48_b34_refpe.pdf")
+                    out_pitch_img = os.path.join(root_dir, "img_out/tbh_cross_attn", f"tbh_cross_attn_ref{ref_ind}_syn{syn_ind}_{figName}_v17.pdf")
+                    out_pitch_img = "/home/rosen/Project/StyleTTS2/res/hierstyle_test/tbh_hier_style_v10.png"
                     draw_tbh_cross_attn(attn_maps, out_pitch_img, b=[3, 4])
 
     if PSDCONTOUR_SIGMA:
         root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
         ablation_dir = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono_v4"
         ref_id, syn_id = 0, 1
-
 
         # cmp: ref0_syn1
         for ref_id in range(5):
@@ -639,3 +644,46 @@ if __name__ == '__main__':
     """
     #cond_syn_pitch_png = os.path.join(img_dir, "cond_syn_pitch.png")
     #draw_cond_syn_pitch(cond_syn_pitch_png)  # not used currently
+
+    if HISTORGRAM:
+        # CONFIG
+        root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
+        emotions = ["Neutral", "Angry", "Happy", "Sad", "Surprise"]  # 5 emotions
+        models = ["monoDiT", "styletts2", "hierspeech", "drawspeech", "reference"]  # 6 models
+
+        # IN
+        emo_model_pe_dict_f = "/home/rosen/ckpt/exp/mdit_tts_esd/psd_monoDiT_DiT_drawspeech_styletts2_hierspeech_reference.json"
+        replacement_dict_path = "/home/rosen/ckpt/exp/mdit_tts_esd_multiversion/psd_monoDiT_reference_0307_seed.json"
+
+        # OUT
+        out_img = os.path.join(root_dir, "img_out/histogram", f"histogram_diffseeds_cmp.pdf")
+
+
+        # replace monoDiT content or not in original dict
+        if False:
+            with open(emo_model_pe_dict_f, "r") as f:
+                emo_model_pe_dict = json.load(f)
+            emo_model_pe_dict = emo_model_pe_dict["spk0019"]
+        else:
+            emo_model_pe_dict = replace_certain_key_value(emo_model_pe_dict_f, replacement_dict_path, replaced_dict_path="",
+                                                          key_depth=2, key_name="monoDiT")["spk0019"]
+        # create middle dict
+        if False:
+            mean_pitch_dict = build_mean_pitch_dict(emo_model_pe_dict, "pitch")
+            with open(out_img.replace(".png", ".json"), "w") as f:
+                json.dump(mean_pitch_dict, f, indent=2)
+        # read middle dict
+        middel_dict_path = "/home/rosen/ckpt/exp/mdit_tts_esd/img_out/histogram/histogram_diffseeds_cmp.json"
+        with open(middel_dict_path, "r") as f:
+            mean_pitch_dict = json.load(f)
+        fig, axes = plot_mean_f0_hist_kde_apsipa(emo_model_pe_dict, emotions, models, savepath=out_img, prosody_type="pitch",
+                                                 middleValue=mean_pitch_dict)
+        """
+        
+        meta = extract_mean_f0_hist_kde_metadata(
+            emo_model_pe_dict,
+            emotions=emotions,
+            models=models)
+        with open("res/mean_f0_hist_kde_meta.json", "w") as f:
+            json.dump(meta, f, indent=2)
+        """

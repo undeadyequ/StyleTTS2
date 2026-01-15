@@ -56,6 +56,9 @@ class CFMDecoder(torch.nn.Module):
         self.attn_cache = list()
         self.t_count = list()
 
+        if self.prosody_fusion:
+            self.prosody_fuser = FactorizedGateMoEProsodyFusion(d_mu=cond_channels, d_s=gin_channels, d_z=pe_emb_dim, cfg=moeConfig)
+
     @torch.no_grad()
     def forward(self, mu, mask, n_timesteps, temperature=1.0, c=None, seq_style=None, p_mask=None,
                 solver=None, cfg_strength=None, mono_guide_delta=0, return_attn_map=True, seq_style_gt=None):
@@ -183,8 +186,6 @@ class CFMDecoder(torch.nn.Module):
             seq_style, piRef_e_a_gap = self.prosody_fuser(mu.transpose(1, 2), c, seq_style.transpose(1, 2), seq_style_gt.transpose(1, 2), # transpose for LN
                                                           return_gates=True)
             seq_style = seq_style.transpose(1, 2)
-        else:
-            piRef_e_a_gap = None
         b, _, t = mu.shape
 
         # random timestep

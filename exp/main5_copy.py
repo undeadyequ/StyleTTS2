@@ -330,7 +330,6 @@ def main(
             wer_utmos2_dict[model_name] = [wer, sub, dele, ins, mean_mos, std_mos]
             with open(wer_utmos_json_path, "w", encoding="utf-8") as f:
                 f.write(json.dumps(wer_utmos2_dict, sort_keys=True, indent=4))
-
         # do wer on gd_speech
         if not os.path.isfile(f"{out_dir}/wer_gd_speech.csv"):
             out_speech_dir = os.path.join(out_dir, "gd_speech")
@@ -539,7 +538,7 @@ if __name__ == "__main__":
     #eval_models = ["monoDiT", "DiT", "drawspeech", "styletts2", "hierspeech"]  # "monoDiT", "DiT", "drawspeech", "styletts2", "hierspeech"
     #eval_models = ["monoDiT_ab0808_m08_fb03", "monoDiT_ab0307_m08_fb03", "monoDiT_ab0808_m08_fbnone"]
     eval_models = ["monoDiT", "DiT", "drawspeech", "styletts2", "hierspeech"]
-    eval_models = ["monoDiT"]
+    eval_models = ["monoDiT"]  # monoDiT_ab0007  monoDiT_ab0307
 
     # INPUT -> syn_styles (emo, spk, wav_p, psd_code), synTexts, and vis related ()
     #TEST_PART_NUM = 2
@@ -547,13 +546,13 @@ if __name__ == "__main__":
     # eval_models = ["drawspeech_libritts_16k_spk_cutdur", "drawspeech_libritts_mdit_16k_cutdur_phase2"] # ["cfm_dit_self", "cfm_dit_cross_distgl", "cfm_mdit_cross_distgl", "styletts2"]
 
     ######### OUTPUT
-    out_dir = f"/home/rosen/ckpt/exp/mdit_tts_{dataset_name}"   # esd, _mdit_multiversion
+    out_dir = f"/home/rosen/ckpt/exp/mdit_tts_{dataset_name}_multiversion"   # esd, _mdit_multiversion
     syn_styles = get_synStyle_from_file(args.style, split_char='|', melstyle_type="codec", dataset_name=dataset_name)  # emotion changed
     synTexts = get_synText_from_file(args.txt)
 
-    EVAL_RANDOM = False
+    EVAL_RANDOM = True
     EVAL_ABLATION = False
-    EVAL_FINE1 = True
+    EVAL_FINE1 = False
     EVAL_FINE2 = False
     if EVAL_RANDOM:
         NUM = 1
@@ -566,8 +565,8 @@ if __name__ == "__main__":
                     cmp_modelnames=eval_models,
                     ref_json=ref_json[dataset_name],
                     out_dir=out_dir,
-                    start_step=1,
-                    end_step=1,
+                    start_step=0,
+                    end_step=0,
                     mel_config=mel_config,
                     vis_attn_config=vis_attn_config[dataset_name],
                     vis_psd_config=vis_psd_config[dataset_name],
@@ -575,9 +574,8 @@ if __name__ == "__main__":
                     save_attn_json_file=True,
                     style_syntex_name="random",
                     infer_json_name="infer.json",
-                    psd_level="phoneme",
-                    save_attn=True
-                )
+                    psd_level="frame",
+                    save_attn=False)
 
     if EVAL_ABLATION:
         # v2:????(attn affect pitch) v4: "train_epoch48" <- base, v5: "train_epoch68", v6: "train_w/_monoGuide",
@@ -632,7 +630,7 @@ if __name__ == "__main__":
         # eval_models = ["monoDiT", "DiT", "drawspeech", "styletts2", "hierspeech"]  # "monoDiT", "DiT", "drawspeech", "styletts2", "hierspeech"
         ## OUTPUT
         out_dir = f"/home/rosen/ckpt/exp/mdit_tts_{dataset_name}_fine1_multiversion"  #
-        fine_categ_labels = ["2"]  # ["05", "1", "2"]
+        fine_categ_labels = ["05", "1", "2"]
         fine_categ_fs = [os.path.join(style_syn_f_dir, "s2_" + fine_cat + ".txt") for fine_cat in fine_categ_labels]
         syn_styles = get_synStyle_from_file(ref_style_f, split_char='|', melstyle_type="codec")  # emotion changed
         fine_synTexts = [get_synText_from_file(fine_categ_f) for fine_categ_f in fine_categ_fs]
@@ -645,7 +643,7 @@ if __name__ == "__main__":
                     ref_json=ref_json[dataset_name],
                     out_dir=out_dir,
                     start_step=1,
-                    end_step=2,    # Set (start_step, end_step)=(0,0), and then set to (1, 2) with break below
+                    end_step=2,   # Set (start_step, end_step)=(0,0), and then set to (1, 2) with break below
                     mel_config=mel_config,
                     vis_attn_config=vis_attn_config[dataset_name],
                     vis_psd_config=vis_psd_config[dataset_name],

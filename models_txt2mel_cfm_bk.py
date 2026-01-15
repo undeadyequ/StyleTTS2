@@ -373,86 +373,6 @@ class AdaIN1d(nn.Module):
         return (1 + gamma) * self.norm(x) + beta
 
 
-class TemporalAdaIN1d(nn.Module):
-    def __init__(self, style_dim, trend_dim, num_features):
-        super().__init__()
-        self.norm = nn.InstanceNorm1d(num_features, affine=False)
-
-        # Separate MLPs to decouple Speaker Identity from Local Trend
-        self.mlp_s = nn.Linear(style_dim, num_features * 2)
-        self.mlp_t = nn.Linear(trend_dim, num_features * 2)
-
-        # Learnable scalar to control trend strength for robustness
-        # Initialized small (0.1) to favor the stable global style initially
-        self.alpha = nn.Parameter(torch.tensor(-2.197))  # sigmoid = 0.1
-
-    def forward(self, x, s, T_i):
-        # x: [B, num_features, T] (BERT features)
-        # s: [B, style_dim] (Global Speaker/Style)
-        # T_i: [B, trend_dim, T] (Phoneme-level trend)
-
-        # 1. Global Speaker Baseline
-        h_s = self.mlp_s(s).unsqueeze(-1)  # [B, num_features*2, 1]
-
-        # 2. Local Trend Offset (Spatial Modulation)
-        h_t = self.mlp_t(T_i.transpose(1, 2)).transpose(1, 2)  # [B, num_features*2, T]
-
-        if h_t.size(-1) * 2 == x.size(-1):
-            h_t = F.interpolate(h_t, size=x.size(-1), mode='nearest')
-
-        # 3. Combine with learnable alpha for mismatch protection
-        h = h_s + (torch.sigmoid(self.alpha) * h_t)
-        gamma, beta = torch.chunk(h, chunks=2, dim=1)
-        return (1 + gamma) * self.norm(x) + beta
-
-
-class TemporalAdainResBlk1d(nn.Module):
-    def __init__(self, dim_in, dim_out, trend_dim, style_dim=64, actv=nn.LeakyReLU(0.2),
-                 upsample='none', dropout_p=0.0):
-        super().__init__()
-        self.actv = actv
-        self.upsample_type = upsample
-        self.upsample = UpSample1d(upsample)
-        self.learned_sc = dim_in != dim_out
-        self._build_weights(dim_in, dim_out, style_dim, trend_dim)
-        self.dropout = nn.Dropout(dropout_p)
-
-        if upsample == 'none':
-            self.pool = nn.Identity()
-        else:
-            self.pool = weight_norm(
-                nn.ConvTranspose1d(dim_in, dim_in, kernel_size=3, stride=2, groups=dim_in, padding=1, output_padding=1))
-
-    def _build_weights(self, dim_in, dim_out, style_dim, trend_dim):
-        self.conv1 = weight_norm(nn.Conv1d(dim_in, dim_out, 3, 1, 1))
-        self.conv2 = weight_norm(nn.Conv1d(dim_out, dim_out, 3, 1, 1))
-        self.norm1 = TemporalAdaIN1d(style_dim, trend_dim, dim_in)
-        self.norm2 = TemporalAdaIN1d(style_dim, trend_dim, dim_out)
-        if self.learned_sc:
-            self.conv1x1 = weight_norm(nn.Conv1d(dim_in, dim_out, 1, 1, 0, bias=False))
-
-    def _shortcut(self, x):
-        x = self.upsample(x)
-        if self.learned_sc:
-            x = self.conv1x1(x)
-        return x
-
-    def _residual(self, x, s, T_i):
-        x = self.norm1(x, s, T_i)  # Pass T_i to TemporalAdaIN1d
-        x = self.actv(x)
-        x = self.pool(x)
-        x = self.conv1(self.dropout(x))
-        x = self.norm2(x, s, T_i)
-        x = self.actv(x)
-        x = self.conv2(self.dropout(x))
-        return x
-
-    def forward(self, x, s, T_i):
-        out = self._residual(x, s, T_i)
-        out = (out + self._shortcut(x)) / math.sqrt(2)
-        return out
-
-
 class UpSample1d(nn.Module):
     def __init__(self, layer_type):
         super().__init__()
@@ -613,8 +533,7 @@ class ProsodyPredictor(nn.Module):
 
 class ProsodyPredictorByTrend(nn.Module):
 
-    def __init__(self, style_dim, d_hid, nlayers, trd_dim, max_dur=50, dropout=0.1, trd_min=50, trd_max=600,
-                 txt_trd_combine_type="concat"):
+    def __init__(self, style_dim, d_hid, nlayers, trd_dim, max_dur=50, dropout=0.1, trd_min=50, trd_max=600, txt_trd_combine_type="concat"):
         super().__init__()
 
         self.text_encoder = DurationEncoder(sty_dim=style_dim,
@@ -704,163 +623,48 @@ class ProsodyPredictorByTrend(nn.Module):
 
         return duration.squeeze(-1), en
 
-    def F0Ntrain(self, x, trd_log, s, uv_mask=None, drop_trend=False):
+    def F0Ntrain(self, x, trd, s, uv_mask=None, drop_trend=False):
         if drop_trend:
             p_emb = self.null_trend_embed.expand(x.size(0), -1, x.size(-1))
         else:
             # 1. discretization, u/v mask, embedding, length alignment
-            trd_log = trd_log[:, 0, :].clamp(self.pitch_bins[0].item(), self.pitch_bins[-1].item())
-            trend_emb_idx = torch.bucketize(trd_log, self.pitch_bins) + 1  # to spare 0 to unvoiced
-            trend_emb_idx = torch.clamp(trend_emb_idx, 1, self.n_bins - 1)
+            trd_log = trd[:, 0, :].clamp(self.pitch_bins[0].item(), self.pitch_bins[-1].item())
+            p_emb_idx = torch.bucketize(trd_log, self.pitch_bins) + 1  # to spare 0 to unvoiced
             if uv_mask is not None:
-                trend_emb_idx = (trend_emb_idx * uv_mask).long()
-            p_emb = self.pitch_embedding(trend_emb_idx).transpose(-1, -2)
+                p_emb_idx = (p_emb_idx * uv_mask).long()
+
+            p_emb = self.pitch_embedding(p_emb_idx).transpose(-1, -2)
             if p_emb.size(-1) != x.size(-1):
                 p_emb = F.interpolate(p_emb, size=x.size(-1), mode="linear", align_corners=True)
             """
             with torch.no_grad():
-                print("idx min/max:", trend_emb_idx.min().item(), trend_emb_idx.max().item())
-                hist = torch.bincount(trend_emb_idx.flatten(), minlength=self.n_bins).float()
+                print("idx min/max:", p_emb_idx.min().item(), p_emb_idx.max().item())
+                hist = torch.bincount(p_emb_idx.flatten(), minlength=self.n_bins).float()
                 print("bin usage:", (hist > 0).sum().item(), "/", self.n_bins)
                 # should be within [0, n_bins-1]
             """
 
         # Smooth and gaussian kernel
         p_emb = self.conv_layer(p_emb)  # (B, d/2, T)
-        #p_emb = F.conv1d(p_emb, self.gaussian_kernel, padding=5, groups=p_emb.size(1))
+        p_emb = F.conv1d(p_emb, self.gaussian_kernel, padding=5, groups=p_emb.size(1))
         #p_emb = F.avg_pool1d(p_emb, kernel_size=11, stride=1, padding=5)
 
-        # LayerNorm x and trd, and add with gate (or concate)
+        # concatenate x and trd
         txt_emb = self.ln_text(x.transpose(1, 2)).transpose(1, 2)
+
         if self.txt_trd_combine_type == "concat":
             trd_emb = self.ln_pitch(p_emb.transpose(1, 2)).transpose(1, 2)
             x = torch.cat([txt_emb, trd_emb], dim=1)
         else:
             trd_emb = self.trend_projection(p_emb.transpose(1, 2))
-            trd_emb = self.ln_pitch(trd_emb).transpose(1, 2)
-            current_scale = torch.sigmoid(self.trend_scale)
-            x = txt_emb +  current_scale * trd_emb * uv_mask.unsqueeze(1) # Clean, stable addition
+            trd_emb = self.ln_pitch(trd_emb)
+            x = txt_emb +  self.trend_scale * trd_emb * uv_mask.unsqueeze(-1) # Clean, stable addition
 
         # LSTM
         x, _ = self.shared(x.transpose(-1, -2))
         F0 = x.transpose(-1, -2)
         for block in self.F0:
             F0 = block(F0, s)
-        F0 = self.F0_proj(F0)
-
-        N = x.transpose(-1, -2)
-        for block in self.N:
-            N = block(N, s)
-        N = self.N_proj(N)
-
-        return F0.squeeze(1), N.squeeze(1)
-
-    def length_to_mask(self, lengths):
-        mask = torch.arange(lengths.max()).unsqueeze(0).expand(lengths.shape[0], -1).type_as(lengths)
-        mask = torch.gt(mask + 1, lengths.unsqueeze(1))
-        return mask
-
-
-class ProsodyPredictorByTrend_v2(nn.Module):
-
-    def __init__(self, style_dim, d_hid, nlayers, trend_dim, max_dur=50, dropout=0.1, trd_min=50, trd_max=600,
-                 n_bins=9):
-        """
-        n_bins=9: # add 1 ("0th") bin for unvoiced
-        """
-        super().__init__()
-        self.text_encoder = DurationEncoder(sty_dim=style_dim, d_model=d_hid, nlayers=nlayers, dropout=dropout)
-        self.lstm = nn.LSTM(d_hid + style_dim, d_hid // 2, 1, batch_first=True, bidirectional=True)
-        self.duration_proj = LinearNorm(d_hid, max_dur)
-
-        # F0/N prediction net
-        self.shared = nn.LSTM(d_hid + style_dim, d_hid // 2, 1, batch_first=True, bidirectional=True)
-        self.F0 = nn.ModuleList()
-        self.F0.append(TemporalAdainResBlk1d(d_hid, d_hid, trend_dim, style_dim, dropout_p=dropout))
-        self.F0.append(TemporalAdainResBlk1d(d_hid, d_hid // 2, trend_dim, style_dim, upsample=True, dropout_p=dropout))
-        self.F0.append(TemporalAdainResBlk1d(d_hid // 2, d_hid // 2, trend_dim, style_dim, dropout_p=dropout))
-
-        self.N = nn.ModuleList()
-        self.N.append(AdainResBlk1d(d_hid, d_hid, style_dim, dropout_p=dropout))
-        self.N.append(AdainResBlk1d(d_hid, d_hid // 2, style_dim, upsample=True, dropout_p=dropout))
-        self.N.append(AdainResBlk1d(d_hid // 2, d_hid // 2, style_dim, dropout_p=dropout))
-
-        self.F0_proj = nn.Conv1d(d_hid // 2, 1, 1, 1, 0)
-        self.N_proj = nn.Conv1d(d_hid // 2, 1, 1, 1, 0)
-
-        # trend setting
-        self.trend_dim = trend_dim
-        self.n_bins = n_bins
-
-        # trend discretizer, embedding, drop out null, smooth conv
-        self.pitch_bins = nn.Parameter(torch.linspace(torch.log(torch.tensor(trd_min)), torch.log(torch.tensor(trd_max)),
-                                                      self.n_bins - 2), requires_grad=False) # "0th" is spared used for unvoiced
-        self.trend_embedding = nn.Embedding(self.n_bins, trend_dim)
-        self.null_trend_embed = nn.Parameter(torch.zeros(1, trend_dim, 1))
-        with torch.no_grad():
-            self.null_trend_embed.copy_(self.trend_embedding.weight.mean(dim=0).unsqueeze(0).unsqueeze(-1))
-        self.conv_layer = nn.Conv1d(trend_dim, trend_dim, 3, padding=1)
-
-    def forward(self, texts, style, text_lengths, alignment, m):
-        d = self.text_encoder(texts, style, text_lengths, m)
-
-        batch_size = d.shape[0]
-        text_size = d.shape[1]
-
-        # predict duration
-        input_lengths = text_lengths.cpu().numpy()
-        x = nn.utils.rnn.pack_padded_sequence(
-            d, input_lengths, batch_first=True, enforce_sorted=False)
-
-        m = m.to(text_lengths.device).unsqueeze(1)
-
-        self.lstm.flatten_parameters()
-        x, _ = self.lstm(x)
-        x, _ = nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
-
-        x_pad = torch.zeros([x.shape[0], m.shape[-1], x.shape[-1]])
-
-        x_pad[:, :x.shape[1], :] = x
-        x = x_pad.to(x.device)
-
-        duration = self.duration_proj(nn.functional.dropout(x, 0.5, training=self.training))
-
-        en = (d.transpose(-1, -2) @ alignment)
-
-        return duration.squeeze(-1), en
-
-    def F0Ntrain(self, x, trd_log, s, uv_mask, drop_trend=False):
-        """
-        trd_log must be log!
-        """
-        if drop_trend:
-            trend_emb = self.null_trend_embed.expand(x.size(0), -1, x.size(-1))
-        else:
-            # 1. cap, discretization, u/v mask, embedding, length alignment
-            trd_log = trd_log[:, 0, :].clamp(self.pitch_bins[0].item(), self.pitch_bins[-1].item())
-            trend_emb_idx = torch.bucketize(trd_log, self.pitch_bins) + 1  # to spare 0 to unvoiced
-            trend_emb_idx = (trend_emb_idx * uv_mask).long()
-            trend_emb = self.trend_embedding(trend_emb_idx).transpose(-1, -2)
-            if trend_emb.size(-1) != x.size(-1):
-                trend_emb = F.interpolate(trend_emb, size=x.size(-1), mode="linear", align_corners=True)
-            """CHECK Bin Usage
-            with torch.no_grad():
-                print("idx min/max:", trend_emb_idx.min().item(), trend_emb_idx.max().item())
-                hist = torch.bincount(trend_emb_idx.flatten(), minlength=self.n_bins).float()
-                print("bin usage:", (hist > 0).sum().item(), "/", self.n_bins)
-                # should be within [0, n_bins-1]
-            """
-
-        # Smooth and gaussian kernel
-        trend_emb = self.conv_layer(trend_emb)  # (B, d/2, T)
-        #trend_emb = F.conv1d(trend_emb, self.gaussian_kernel, padding=5, groups=trend_emb.size(1))
-        #trend_emb = F.avg_pool1d(trend_emb, kernel_size=11, stride=1, padding=5)
-
-        # LSTM
-        x, _ = self.shared(x.transpose(-1, -2))
-        F0 = x.transpose(-1, -2)
-        for block in self.F0:
-            F0 = block(F0, s, trend_emb)
         F0 = self.F0_proj(F0)
 
         N = x.transpose(-1, -2)
@@ -991,14 +795,9 @@ def build_model(args, args_cfm, text_aligner, pitch_extractor, bert):
 
     text_encoder = TextEncoder(channels=args.hidden_dim, kernel_size=5, depth=args.n_layer, n_symbols=args.n_token)
 
-    if "cond_prosody_type" in args:
-        if args.cond_prosody_type == "simplefuse":
-            predictor = ProsodyPredictorByTrend(style_dim=args.style_dim, d_hid=args.hidden_dim, nlayers=args.n_layer,
-                                                trd_dim=args.trd_dim, max_dur=args.max_dur, dropout=args.dropout,
-                                                txt_trd_combine_type=args.txt_trd_combine_type)
-        else:
-            predictor = ProsodyPredictorByTrend_v2(style_dim=args.style_dim, d_hid=args.hidden_dim, nlayers=args.n_layer,
-                                                trend_dim=args.trd_dim, max_dur=args.max_dur, dropout=args.dropout)
+    if "cond_prosody_type" in args and args.cond_prosody_type == "simplefuse":
+        predictor = ProsodyPredictorByTrend(style_dim=args.style_dim, d_hid=args.hidden_dim, trd_dim=args.trd_dim,
+                                            nlayers=args.n_layer, max_dur=args.max_dur, dropout=args.dropout)
     else:
         predictor = ProsodyPredictor(style_dim=args.style_dim, d_hid=args.hidden_dim, nlayers=args.n_layer,
                                      max_dur=args.max_dur, dropout=args.dropout)
