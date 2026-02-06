@@ -432,7 +432,6 @@ def get_s2s(texts, input_lengths, mels, mel_input_length, text_aligner):
     return s2s_attn_mono
 
 
-
 if __name__ == '__main__':
     model_root_dir = "/home/rosen/ckpt/styletts2_libriTTS/"
     model_config = {

@@ -15,6 +15,7 @@ Other Pictures
 import json
 import os.path
 import torch
+import torchaudio
 
 from mpmath.libmp.libelefun import atan_newton
 
@@ -24,7 +25,7 @@ from vis_data_adaptor import phone2syl, convert_vis_psd_json
 import matplotlib.pyplot as plt
 
 from visualization import vis_mono_guide_mask
-from vis2 import plot_mel_with_pitch, plot_attn_with_rect, plot_lines, plot_mel_with_pitch2, plot_attn_with_rect2
+from vis2 import plot_mel_with_pitch, plot_attn_with_rect, plot_lines, plot_mel_with_pitch2, plot_attn_with_rect2, plot_multiple_sty_losses, plot_f0_comparison
 #from inference_1_or_2 import inference_second, get_second_model
 import numpy as np
 from utilities.guide_mask import make_guided_attention_masks2
@@ -33,7 +34,7 @@ from itertools import accumulate
 from exec_draw_two_pitch import plot_pitch_multi
 from exec_histogram import plot_mean_f0_hist_kde_apsipa, extract_mean_f0_hist_kde_metadata, build_mean_pitch_dict
 from exp_utils import replace_certain_key_value
-
+from main_sample_for_vis import synthesize_semStyle_fuseSytle_sample
 
 model_config = {
         "mdit_cfm_v10": ["first_txt2mel_cfm_v10/epoch_2nd_00048.pth",
@@ -470,62 +471,6 @@ def draw_tbh_cross_attn(tbh_attn, out_pitch_img="tbh_cross_attn.pdf", b=[0, 5]):
 
 
 
-def synthesize_sample(ref_path, syn_txt, mono_guide_delta=(), fuse_beta=()):
-    """
-    Synthesize speech given style, text with different monoGuide strength and fuse_strength
-    return:
-
-    """
-    # set model config
-    model_root_dir = "/home/rosen/ckpt/styletts2_libriTTS/"
-    model_name = "mdit_cfm_v10"
-    second_model_path, second_config = model_root_dir + model_config[model_name][0], model_root_dir + \
-                                       model_config[model_name][1]
-    second_model, sampler, model_params = get_second_model(ckpt=second_model_path, config_f=second_config)
-
-    # synthesize speech
-    save_lines_path = ""
-
-    ## Test on band_sigmas, save wavs, attn_maps
-    inference_args_copy = inference_args.copy()
-    for delta in mono_guide_delta:
-        inference_args_copy["mono_guide_delta"] = delta
-        audio, (ref_p, pred_p, fuse_p_02),  _, attn_maps, pred_dur = inference_second(syn_txt, ref_path,
-                                                                                             second_model, sampler,
-                                                                                             model_params,
-                                                                                             **inference_args_copy)
-        wav_f = os.path.basename(ref_path) + str(delta).replace(".", "") + ".wav"
-        attn_map_f = os.path.basename(ref_path) + str(delta).replace(".", "") + "attn.npy"
-        librosa.save(audio, wav_f)
-        np.save(attn_maps, attn_map_f)
-
-
-    ## Test on ref_pe, pred_pe and fuse with different fuse_beta, save wavs, cond/syn pe
-    inference_args_copy = inference_args.copy()
-    inference_args_copy["mix_ref_pe_type"] = "none"
-    audio_pred_pe, (ref_p, pred_p, _),  _, pred_dur = inference_second(syn_txt, ref_path, second_model, sampler,
-                                                                   model_params, **inference_args_copy)
-
-    inference_args_copy["mix_ref_pe_type"] = "ref_pe"
-    audio_ref_pe, (ref_p, pred_p, _), _, pred_dur = inference_second(syn_txt, ref_path, second_model, sampler,
-                                                                  model_params, **inference_args_copy)
-    inference_args_copy["mix_ref_pe_type"] = "ref_pred_add"
-    inference_args_copy["fuse_beta"] = 0.2
-    audio_fuse_pe_02, (ref_p, pred_p, fuse_p_02),  _, pred_dur = inference_second(syn_txt, ref_path, second_model,
-                                                                              sampler, model_params,
-                                                                              **inference_args_copy)
-    inference_args["fuse_beta"] = 0.4
-    audio_fuse_pe_04, (ref_p, pred_p, fuse_p_04),  _, pred_dur = inference_second(syn_txt, ref_path, second_model,
-                                                                              sampler, model_params,
-                                                                              **inference_args_copy)
-    save_lines = {
-        "condition_p": [ref_p, fuse_p_02, fuse_p_04, pred_p],
-        "synthesize_p": [audio_ref_pe, audio_fuse_pe_02, audio_fuse_pe_04, audio_pred_pe]
-    }
-
-    with open(save_lines_path, "w", encoding="utf-8") as f:
-        f.write(json.dumps(save_lines, sort_keys=False, indent=4))
-
 if __name__ == '__main__':
     ablation_dir = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono_v4"
     img_dir = "/home/rosen/ckpt/exp/mdit_tts_esd/img_out"
@@ -535,9 +480,11 @@ if __name__ == '__main__':
     PSDCONTOUR = False # Fig 3
     ATTNSIGMA = False # Fig 4
     ATTNMEL = False # Fig 5
-    ATTNTBH = True  # Fig 6, 7
+    ATTNTBH = False  # Fig 6, 7
     PSDCONTOUR_SIGMA = False
+    PSDCOND_SYN_GAMMA = False
     HISTORGRAM = False
+    LOSS_PRINT = True
     if PSDCONTOUR:
         root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
         # IN
@@ -645,6 +592,107 @@ if __name__ == '__main__':
     #cond_syn_pitch_png = os.path.join(img_dir, "cond_syn_pitch.png")
     #draw_cond_syn_pitch(cond_syn_pitch_png)  # not used currently
 
+    if PSDCOND_SYN_GAMMA:
+        """
+        ref_id, syn_id = 4, 15  # -> spk0019_Surprise_ref0_syn2: (1, 0);  spk0019_Surprise_ref3_syn2: (15, 5)
+        spk, emo = "0019", "Surprise"
+        ref_model, semStyle_model, proStyle_model, fuseStyle1_model = (
+            "reference", "monoDiT",
+            "decoditV29_epoch52_trendStren0m5", # DO later
+            "decoditV29_epoch52_trendStren1")
+        """
+        root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
+        cond_syn_psd_json = os.path.join(root_dir, "img_out/psdcond_syn_gamma/cond_syn_psd.json")
+        cond_syn_psd_cmp_json = os.path.join(root_dir, "img_out/psdcond_syn_gamma/cond_syn_psd_cmp.json")
+
+        out_conPitch_img = os.path.join(root_dir, "img_out/psdcond_syn_gamma",
+                     f"pitch_contour_sigma.pdf")
+        out_synPitch_img = os.path.join(root_dir, "img_out/psdcond_syn_gamma",
+                                     f"pitch_contour_sigma_syn.pdf")
+        out_conEng_img = os.path.join(root_dir, "img_out/psdcond_syn_gamma",
+                                        f"energy_contour_sigma.pdf")
+        out_synEng_img = os.path.join(root_dir, "img_out/psdcond_syn_gamma",
+                                        f"energy_contour_sigma_syn.pdf")
+
+        # Draw 5 pitch contours of ref, pred_sem_style, pred_fus_style_stren1, pred_fus_style_stren2, pros_quant_style
+        psd_syn_json = "/home/rosen/ckpt/exp2/grid_ablation_ablation_esd/psd_aggregated.json"
+        with open(psd_syn_json, "r") as f:
+            psd_syn_dict = json.load(f)
+        """
+        f0_ref = psd_syn_dict["spk" + spk][emo][ref_model]["pitch"][ref_id]
+        f0_sem_style = psd_syn_dict["spk" + spk][emo][semStyle_model]["pitch"][syn_id]
+        f0_pro_style_quant = psd_syn_dict["spk" + spk][emo][proStyle_model]["pitch"][syn_id]
+        f0_fus_style_stren1 = psd_syn_dict["spk" + spk][emo][fuseStyle1_model]["pitch"][syn_id]
+        """
+        Generate_new_sample = False
+        if Generate_new_sample: # USE the generated one
+            cond_syn_psd = synthesize_semStyle_fuseSytle_sample()
+            with open(cond_syn_psd_json, "w", encoding="utf-8") as f:
+                f.write(json.dumps(cond_syn_psd, sort_keys=True, indent=4))
+        else:  # USE CMP
+            with open(cond_syn_psd_cmp_json, "r", encoding="utf-8") as f:
+                cond_syn_psd = json.load(f)
+
+        f0_ref, f0_sem_style, f0_pro_style_quant, f0_fus_style_stren1 = (
+            cond_syn_psd["cond"]["refStyle"][0],
+            cond_syn_psd["cond"]["semStyle"][0],
+            cond_syn_psd["cond"]["posStyle"][0],
+            cond_syn_psd["cond"]["fusStyle"][0]
+        )
+        f0_sem_style_syn, f0_fus_style_stren1_syn = (
+            cond_syn_psd["syn"]["semStyle"][0],
+            cond_syn_psd["syn"]["fusStyle"][0]
+        )
+        eng_ref, eng_sem_style, eng_fus_style_stren1 = (
+            cond_syn_psd["cond"]["refStyle"][1],
+            cond_syn_psd["cond"]["semStyle"][1],
+            cond_syn_psd["cond"]["fusStyle"][1]
+        )
+        eng_sem_style_syn, eng_fus_style_stren1_syn = (
+            cond_syn_psd["syn"]["semStyle"][1],
+            cond_syn_psd["syn"]["fusStyle"][1]
+        )
+
+        # Pitch contour comparison (predicted)
+        plot_f0_comparison(
+            contours=[f0_ref, f0_sem_style, np.array(f0_pro_style_quant) * 20, f0_fus_style_stren1],
+            labels=["Reference", "Semantic Style", "Prosodic Style (quantized)", r"Semantic-Prosodic Style ($\gamma = 1.0$)"],
+            out_path=out_conPitch_img,
+            target_len=len(f0_fus_style_stren1),
+            ylabel=r"$F_0$ (Hz)",
+            ylim=(0, 800),
+            legend_ncol=2  # Two-column compact legend
+        )
+        # Pitch contour comparison (synthesized)
+        plot_f0_comparison(
+            contours=[f0_ref, f0_sem_style_syn, f0_fus_style_stren1_syn],
+            labels=["Reference", "Conditioned on Semantic style", r"Conditioned on Semantic-Prosodic Style ($\gamma = 1.0$)"],
+            out_path=out_synPitch_img,
+            target_len=len(f0_fus_style_stren1_syn),
+            ylabel=r"$F_0$ (Hz)",
+            ylim=(0, 700)
+        )
+
+        # Energy contour comparison (predicted)
+        plot_f0_comparison(
+            contours=[eng_ref, eng_sem_style, np.array(f0_pro_style_quant) / 3.0, eng_fus_style_stren1],
+            labels=["Reference", "Semantic Style", "Prosodic Style (quantized)", r"Semantic-Prosodic Style ($\gamma = 1.0$)"],
+            out_path=out_conEng_img,
+            target_len=len(eng_fus_style_stren1),
+            ylabel=r"Energy (normalized)"
+            # ylim=None uses auto with 25% top margin
+        )
+        # Energy contour comparison (synthesized)
+        plot_f0_comparison(
+            contours=[eng_ref, eng_sem_style_syn, eng_fus_style_stren1_syn],
+            labels=["Reference", "Conditioned on Semantic style", r"Conditioned on Semantic-Prosodic Style ($\gamma = 1.0$)"],
+            out_path=out_synEng_img,
+            target_len=len(eng_fus_style_stren1_syn),
+            ylabel=r"Energy (normalized)"
+        )
+
+
+
     if HISTORGRAM:
         # CONFIG
         root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
@@ -679,7 +727,6 @@ if __name__ == '__main__':
         fig, axes = plot_mean_f0_hist_kde_apsipa(emo_model_pe_dict, emotions, models, savepath=out_img, prosody_type="pitch",
                                                  middleValue=mean_pitch_dict)
         """
-        
         meta = extract_mean_f0_hist_kde_metadata(
             emo_model_pe_dict,
             emotions=emotions,
@@ -687,3 +734,17 @@ if __name__ == '__main__':
         with open("res/mean_f0_hist_kde_meta.json", "w") as f:
             json.dump(meta, f, indent=2)
         """
+
+    if LOSS_PRINT:
+        log_paths = [
+            "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v10/tensorboard",
+            "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v29/tensorboard"
+        ]
+        labels = ["Semantic Style", "Semantic-Prosodic Style"]
+        out_img = "/home/rosen/ckpt/exp/mdit_tts_esd/img_out/sty_loss/comparison_F0_loss.pdf"
+        plot_multiple_sty_losses(log_paths, labels, loss_tag='train/F0_loss',
+                                 window_size=30, save_name=out_img, ylabel="F0 Loss")
+
+        out_img = "/home/rosen/ckpt/exp/mdit_tts_esd/img_out/sty_loss/comparison_energy_loss.pdf"
+        plot_multiple_sty_losses(log_paths, labels, loss_tag='train/norm_loss',
+                                 window_size=30, save_name=out_img, ylabel="Energy Loss")

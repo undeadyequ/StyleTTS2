@@ -111,11 +111,22 @@ model_meta = {
                        "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
         "monoDiT_ab0000": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth",
                            "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
-        "decoDiT_v16": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v16/epoch_2nd_00020.pth", "first_txt2mel_cfm_v16/config_libritts_txt2mel_cfm_v16.yml"],
+        "monoDiT_epoch20": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00020.pth",
+                           "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
         "monoDiT_ab0808_m08_fb03": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
         "monoDiT_ab0307_m08_fb03": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
-        "monoDiT_ab0808_m08_fbnone": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"]
-}
+        "monoDiT_ab0808_m08_fbnone": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
+        "decodit_cfm_v24": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v24/epoch_2nd_00036.pth", "first_txt2mel_cfm_v24/config_libritts_txt2mel_cfm_v24_modify.yml"],
+        "decodit_cfm_v25": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v25/epoch_2nd_00032.pth", "first_txt2mel_cfm_v25/config_libritts_txt2mel_cfm_v25_modify.yml"],
+        "decodit_cfm_v26": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v26/epoch_2nd_00030.pth",
+                        "first_txt2mel_cfm_v26/config_libritts_txt2mel_cfm_v26.yml"],
+        "decodit_cfm_v27": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v27/epoch_2nd_00030.pth",
+                            "first_txt2mel_cfm_v27/config_libritts_txt2mel_cfm_v27.yml"],
+        "decodit_cfm_v28": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v28/epoch_2nd_00038.pth",
+                            "first_txt2mel_cfm_v28/config_libritts_txt2mel_cfm_v28.yml"],
+        "decodit_cfm_v29": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v29/epoch_2nd_00052.pth",  # cmp
+                                    "first_txt2mel_cfm_v29/config_libritts_txt2mel_cfm_v29.yml"]
+        }
 
 model_infer_config = {
         "styletts2": {
@@ -141,7 +152,19 @@ model_infer_config = {
         "hierspeech": {},
         "monoDiT": {
             "alpha": 0.3,
-            "beta": 0.1,
+            "beta": 0.7,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "mono_guide_delta": -1.0,
+            "Vis_F0": False,
+            "fuse_beta": 0.3
+        },
+        "monoDiT_epoch20": {
+            "alpha": 0.3,
+            "beta": 0.7,
             "diffusion_steps": 10,
             "embedding_scale": 1,
             "style_dim": 256,
@@ -153,7 +176,7 @@ model_infer_config = {
         },
         "monoDiT_ab0307": {
             "alpha": 0.3,
-            "beta": 0.7,
+            "beta": 0.1,
             "diffusion_steps": 10,
             "embedding_scale": 1,
             "style_dim": 256,
@@ -187,14 +210,6 @@ model_infer_config = {
             "Vis_F0": False,
             "fuse_beta": 0.3
         },
-        "decoDiT_v16": {
-            "alpha": 0.3,
-            "beta": 0.7,
-            "diffusion_steps": 10,
-            "embedding_scale": 1,
-            "cfg_strength": 3,
-            "Vis_F0": False,
-        },
         "monoDiT_ab0808_m08_fb03": {
             "alpha": 0.8,
             "beta": 0.8,
@@ -220,4 +235,67 @@ model_infer_config = {
             "Vis_F0": False,
             "fuse_beta": 0.3
         },
+        "decodit_cfm_v24": {
+            "alpha": 0.3,
+            "beta": 0.1,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "Vis_F0": False,
+        },
+        "decodit_cfm_v25": {
+            "alpha": 0.3,
+            "beta": 0.1,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "Vis_F0": False,
+        },
+        "decodit_cfm_v26": {
+            "alpha": 0.3,
+            "beta": 0.7,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "Vis_F0": False,
+        },
+        "decodit_cfm_v27": {
+            "alpha": 0.3,
+            "beta": 0.7,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "Vis_F0": False,
+        },
+        "decodit_cfm_v28": {
+            "alpha": 0.3,
+            "beta": 0.7,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "drop_trend": False,
+            "hierStyle": True
+        },
+        "decodit_cfm_v29": {
+            "alpha": 0.3,
+            "beta": 0.7,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "drop_trend": False,
+            "hierStyle": True,
+            "need_uv_mask": True
+        }
 }

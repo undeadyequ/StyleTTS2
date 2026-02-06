@@ -109,8 +109,9 @@ class FilePathDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):        
         data = self.data_list[idx]
         path = data[0]
-        
         wave, text_tensor, speaker_id, uv_mask = self._load_tensor2(data)
+
+        # create UV mask
         uv_mask = F.pad(uv_mask, (1, 1), "constant", 0)
         # check if uv_mask is same as text_tensor
         if text_tensor.size(-1) != uv_mask.size(-1):

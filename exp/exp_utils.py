@@ -366,7 +366,10 @@ def copy_reference_speech(syn_styles, ref_dir):
         ref_texts.append(ref_txt) if ref_txt not in ref_texts else ref_texts
         r_id = ref_texts.index(ref_txt)
         r_wav_f = f'spk{spk}_{emo}_ref{r_id}.wav'
+        r_txt_f = f'spk{spk}_{emo}_ref{r_id}.lab'
         shutil.copy(speech_path, os.path.join(ref_dir, r_wav_f))
+        with open(os.path.join(ref_dir, r_txt_f), "w") as file1:
+            file1.write(ref_txt)
 
 def get_pitch_match_score(pitch1, pitch2):
     pitch_score = 0
@@ -600,3 +603,45 @@ if __name__ == '__main__':
     print("mcd betwenn origin and p2p is: {}".format(mcd_origin_p2p))
 
 
+def build_voiced_mask(phonemes_list):
+    """
+    Build voiced mask from IPA phonemes and phoneme→frame attention.
+
+    Args:
+        phonemes_list : list of IPA phoneme strings, length [N_p]
+                        (e.g., ["s", "a", "m", "p", "l", "ɚ"])
+        p2f_attn      : tensor [N_p, N_f] of {0,1} mapping phonemes→frames
+
+    Returns:
+        voiced_mask : tensor [N_f] with 1 for voiced frames
+    """
+    # ----------------------------
+    # 1. Define voiced IPA symbols
+    # ----------------------------
+    voiced_ipa = {
+        # vowels
+        "i", "y", "ɨ", "ʉ", "ɯ", "u",
+        "ɪ", "ʏ", "ʊ",
+        "e", "ø", "ɘ", "ɵ", "ɤ", "o",
+        "ə", "ɛ", "œ", "ɜ", "ɞ", "ʌ", "ɔ",
+        "æ", "ɐ", "a", "ɶ", "ɑ", "ɒ",
+        # voiced consonants
+        "b", "d", "ɡ", "v", "ð", "z", "ʒ",
+        "ʝ", "ɣ", "ʁ", "ʕ", "ɦ",
+        "m", "n", "ŋ", "ɱ", "ɳ", "ɲ", "ŋ̊",
+        "l", "ɫ", "ɭ", "ʎ", "r", "ɹ", "ɻ", "ɾ",
+        "w", "j",
+    }
+
+    # ----------------------------
+    # 2. Phoneme-level voiced flags
+    # ----------------------------
+    voiced_ph_flag = torch.tensor([1.0 if ph in voiced_ipa else 0.0 for ph in phonemes_list])  # [N_p]  device=phonemes_list.device
+
+    # ----------------------------
+    # 3. Project to frame-level mask
+    # ----------------------------
+    # p2f_attn is [N_p, N_f] 0/1 matrix, summing across phonemes covering each frame
+    #voiced_mask = voiced_ph_flag @ p2f_attn     # [N_f]
+    voiced_mask = (voiced_ph_flag > 0).float()     # clamp to {0,1}
+    return voiced_mask

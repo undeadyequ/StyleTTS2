@@ -15,7 +15,12 @@ version,name,description,Intelligibility,Prosody,quality
 06,upsample_mel_v2,,,,
 05,,,,,
 04,styleDim128 ,,,,
-20,simplefuse_dim8,,0.3: unvoiced_bad,pitch_qk_change,bad_0.2
+20,simplefuse_dim8,change to dim8,0.3: unvoiced_bad,pitch_qk_change,bad_0.2
 21,,,,,
 22,simplefuse_resAdd,"resAdd_sigmoid, data_ratio=0.6, zero_init_residual, uv_mask_twice",good_0.9,burst_low_quality_0.2,0.8
 23,simplefuse_resAdd_v2,"data_ratio=1.0, no_gaussion_smooth",,,
+24,TemporalAdaIN,Temporal AdaIN,,,
+25,TemporalAdaIN,"Temporal AdaIN with tanh, uv_mask_after_conv",,,
+26,TemporalAdaIN,"same as 25, h_t only for beta",,,
+27,TemporalAdaIN,spectral_norm and max_norm for trend signal,,,
+28,concatenate,,,,

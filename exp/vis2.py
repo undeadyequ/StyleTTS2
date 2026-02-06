@@ -12,6 +12,10 @@ import whisper
 import pyworld as pw
 import torch
 from sympy.printing.pretty.pretty_symbology import line_width
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from tbparse import SummaryReader
 
 
 def plot_attn_with_rect(ax, title, attn, x_ltl_set, y_ltl_set, kwargs):
@@ -369,35 +373,140 @@ def plot_simple_mel(audio_path, out_path):
     plt.savefig(out_path)
 
 
-def plot_f0_comparison(F0_ref, F0_pred, F0_fused, title="Pitch Comparison", out_path="pitch_compare.png",
-                       labels=("Reference F₀", "Predicted F₀", "Fused F₀")):
+def plot_f0_comparison(contours, labels, title=None, out_path="pitch_compare.pdf",
+                       target_len=None, figsize=(7, 2.5), show_grid=False,
+                       xlabel="Frame", ylabel=r"$F_0$ (normalized)",
+                       ylim=None, legend_loc='upper left', legend_outside=False,
+                       legend_ncol=1):
     """
-    Visualize reference, predicted, and fused F0 contours.
-    F0_* can be 1-D torch tensors or numpy arrays.
+    Visualize multiple F0/energy contours (academic style).
+
+    Args:
+        contours: List of 1-D contours (tensor, numpy, or list). Supports any number.
+        labels: List of legend labels (same length as contours)
+        title: Figure title (None for no title - common in papers)
+        out_path: Output path (.pdf recommended for vector graphics)
+        target_len: Resample all curves to this length (default: length of last contour)
+        figsize: Figure size in inches (width, height)
+        show_grid: Whether to show grid lines
+        xlabel, ylabel: Axis labels
+        ylim: Y-axis limits as (ymin, ymax). None for auto with 20% top margin for legend.
+        legend_loc: Legend location ('upper left', 'upper right', 'lower left', etc.)
+        legend_outside: If True, place legend outside plot area (right side)
+        legend_ncol: Number of columns in legend (default: 1, use 2+ for compact horizontal layout)
     """
-    # convert to numpy
-    F0_ref   = F0_ref.detach().cpu().numpy() if isinstance(F0_ref, torch.Tensor) else F0_ref
-    F0_pred  = F0_pred.detach().cpu().numpy() if isinstance(F0_pred, torch.Tensor) else F0_pred
-    F0_fused = F0_fused.detach().cpu().numpy() if isinstance(F0_fused, torch.Tensor) else F0_fused
+    # Academic style settings
+    with plt.rc_context({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "STIXGeneral", "DejaVu Serif"],
+        "mathtext.fontset": "stix",
+        "font.size": 11,
+        "axes.titlesize": 12,
+        "axes.labelsize": 11,
+        "axes.linewidth": 0.8,
+        "legend.fontsize": 10,
+        "legend.framealpha": 0.95,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "xtick.direction": "in",
+        "ytick.direction": "in",
+        "xtick.major.size": 4,
+        "ytick.major.size": 4,
+    }):
+        # Convert to numpy helper
+        def to_numpy(x):
+            if x is None:
+                return None
+            if isinstance(x, torch.Tensor):
+                return x.detach().cpu().numpy()
+            elif isinstance(x, list):
+                return np.array(x)
+            return x
 
-    # match length if needed
-    T = len(F0_fused)
-    if len(F0_ref)  != T:
-        F0_ref  = np.interp(np.linspace(0,1,T), np.linspace(0,1,len(F0_ref)),  F0_ref)
-    if len(F0_pred) != T:
-        F0_pred = np.interp(np.linspace(0,1,T), np.linspace(0,1,len(F0_pred)), F0_pred)
+        # Convert all contours
+        contours = [to_numpy(c) for c in contours]
 
-    plt.figure(figsize=(10, 4))
-    plt.plot(F0_ref,   label=labels[0], color='green', linestyle=':',  alpha=0.8)
-    plt.plot(F0_pred,  label=labels[1], color='blue',  linestyle='--', alpha=0.8)
-    plt.plot(F0_fused, label=labels[2], color='red',   linewidth=2.0)
-    plt.title(title)
-    plt.xlabel("Frame index")
-    plt.ylabel("Normalized F₀ (log or latent scale)")
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(out_path)
+        # Filter out None contours
+        valid_pairs = [(c, l) for c, l in zip(contours, labels) if c is not None]
+        if not valid_pairs:
+            return
+        contours, labels = zip(*valid_pairs)
+
+        # Match length if needed
+        if target_len is None:
+            target_len = len(contours[-1])
+
+        def resample(arr, target):
+            if len(arr) != target:
+                return np.interp(np.linspace(0, 1, target),
+                                 np.linspace(0, 1, len(arr)), arr)
+            return arr
+
+        contours = [resample(c, target_len) for c in contours]
+
+        # Professional colorblind-friendly palette
+        # Last contour is always primary (most prominent)
+        base_colors = ['#2c3e50', '#3498db', '#9b59b6', '#27ae60', '#f39c12', '#1abc9c', '#e91e63']
+        primary_color = '#e74c3c'  # Red for the primary (last) curve
+
+        n = len(contours)
+        fig, ax = plt.subplots(figsize=figsize)
+
+        # Plot all curves with dynamic styling: last is always primary
+        for i, (contour, label) in enumerate(zip(contours, labels)):
+            if i == n - 1:
+                # Primary (last): solid, thickest, full opacity, red
+                style = {'color': primary_color, 'linestyle': '-', 'linewidth': 1.8, 'alpha': 1.0}
+            elif i == n - 2:
+                # Secondary (second-to-last): dash-dot, thin, slightly transparent
+                style = {'color': base_colors[i % len(base_colors)], 'linestyle': '-.', 'linewidth': 1.2, 'alpha': 0.8}
+            elif i == 0:
+                # First (reference): dashed
+                style = {'color': base_colors[i % len(base_colors)], 'linestyle': '--', 'linewidth': 1.2, 'alpha': 0.9}
+            else:
+                # Others: dotted
+                style = {'color': base_colors[i % len(base_colors)], 'linestyle': ':', 'linewidth': 1.5, 'alpha': 0.9}
+
+            ax.plot(contour, label=label, **style)
+
+        # Labels
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+
+        if title:
+            ax.set_title(title)
+
+        # Set y-axis limits
+        if ylim is not None:
+            ax.set_ylim(ylim)
+        else:
+            # Auto-expand y-axis with 20% margin at top for legend
+            all_values = np.concatenate(contours)
+            ymin, ymax = np.min(all_values), np.max(all_values)
+            margin = (ymax - ymin) * 0.25  # 25% margin for legend
+            ax.set_ylim(ymin - margin * 0.1, ymax + margin)
+
+        # Legend
+        if legend_outside:
+            ax.legend(loc='center left', bbox_to_anchor=(1.02, 0.5),
+                      frameon=True, fancybox=False, edgecolor='gray', framealpha=0.95,
+                      ncol=legend_ncol)
+        else:
+            ax.legend(loc=legend_loc, frameon=True, fancybox=False,
+                      edgecolor='gray', framealpha=0.95, ncol=legend_ncol)
+
+        # Grid (optional)
+        if show_grid:
+            ax.grid(True, linestyle='--', alpha=0.3, linewidth=0.5)
+
+        # Spine styling
+        for spine in ax.spines.values():
+            spine.set_linewidth(0.8)
+
+        plt.tight_layout()
+        plt.savefig(out_path, dpi=600, bbox_inches='tight',
+                    facecolor='white', edgecolor='none')
+        plt.close()
 
 
 def plot_f0_multi(
@@ -440,8 +549,7 @@ def plot_f0_multi(
                 c = np.interp(
                     np.linspace(0, 1, target_len),
                     np.linspace(0, 1, len(c)),
-                    c
-                )
+                    c)
             curves_resampled.append(c)
         curves_np = curves_resampled
 
@@ -486,6 +594,111 @@ def draw_dtw(a, b, best_path, output_png="dtw_out.png"):
     plt.savefig(output_png)
     plt.close()
 
+
+def plot_multiple_sty_losses(log_paths, labels, loss_tag='train/sty_loss',
+                             window_size=50, save_name="comparison_plot.pdf",
+                             figsize=(7, 3), ylabel="Loss"):
+    """
+    Plot training loss curves comparison (academic style for APSIPA Transactions).
+
+    Args:
+        log_paths: List of paths to tensorboard log directories
+        labels: List of legend labels (same length as log_paths)
+        loss_tag: Loss tag to extract (e.g., 'train/sty_loss', 'train/F0_loss')
+        window_size: Smoothing factor for the trend line
+        save_name: Output file path (.pdf recommended for vector graphics)
+        figsize: Figure size in inches (width, height)
+        ylabel: Y-axis label
+    """
+    # First pass: Load all data and find minimum max step
+    all_loss_dfs = []
+    max_steps = []
+    for path in log_paths:
+        reader = SummaryReader(path)
+        df = reader.scalars
+        loss_df = df[df['tag'] == loss_tag].copy()
+        if not loss_df.empty:
+            all_loss_dfs.append(loss_df)
+            max_steps.append(loss_df['step'].max())
+        else:
+            all_loss_dfs.append(None)
+            print(f"Warning: No '{loss_tag}' found in {path}")
+
+    # Find minimum max step across all models
+    valid_max_steps = [s for s in max_steps if s is not None]
+    if not valid_max_steps:
+        print("Error: No valid loss data found in any log path")
+        return
+    min_max_step = min(valid_max_steps)
+    print(f"Truncating all models to minimum iteration: {min_max_step}")
+
+    # Academic style settings
+    with plt.rc_context({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "STIXGeneral", "DejaVu Serif"],
+        "mathtext.fontset": "stix",
+        "font.size": 11,
+        "axes.titlesize": 12,
+        "axes.labelsize": 11,
+        "axes.linewidth": 0.8,
+        "legend.fontsize": 10,
+        "legend.framealpha": 0.95,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "xtick.direction": "in",
+        "ytick.direction": "in",
+        "xtick.major.size": 4,
+        "ytick.major.size": 4,
+    }):
+        fig, ax = plt.subplots(figsize=figsize)
+
+        # Professional colorblind-friendly colors
+        colors = ['#3498db', '#e74c3c', '#27ae60', '#9b59b6']
+        linestyles = ['-', '--', ':', '-.']
+
+        for i, (loss_df, label) in enumerate(zip(all_loss_dfs, labels)):
+            if loss_df is None:
+                continue
+
+            # Truncate to minimum max step
+            loss_df = loss_df[loss_df['step'] <= min_max_step]
+
+            # Plot Raw Data (faded background)
+            ax.plot(loss_df['step'], loss_df['value'],
+                    color=colors[i % len(colors)], alpha=0.15, linewidth=0.5)
+
+            # Plot Smoothed Data (bold foreground)
+            smoothed = loss_df['value'].rolling(window=window_size, min_periods=1).mean()
+            ax.plot(loss_df['step'], smoothed,
+                    color=colors[i % len(colors)],
+                    linestyle=linestyles[i % len(linestyles)],
+                    label=label, linewidth=1.8)
+
+        # Labels (no title - journals use captions)
+        ax.set_xlabel('Iteration')
+        ax.set_ylabel(ylabel)
+
+        # Format x-axis with k notation (e.g., 100k, 200k)
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x/1000)}k'))
+
+        # Legend
+        ax.legend(loc='upper right', frameon=True, fancybox=False,
+                  edgecolor='gray', framealpha=0.95)
+
+        # Subtle grid
+        ax.grid(True, linestyle='--', alpha=0.3, linewidth=0.5)
+
+        # Spine styling
+        for spine in ax.spines.values():
+            spine.set_linewidth(0.8)
+
+        plt.tight_layout()
+        plt.savefig(save_name, dpi=600, bbox_inches='tight',
+                    facecolor='white', edgecolor='none')
+        plt.close()
+        print(f"Plot saved as {save_name}")
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -494,10 +707,22 @@ if __name__ == '__main__':
                         default="/home/rosen/Project/StableTTS/result/ddpm_dit_cross/mel_out.png")
     args = parser.parse_args()
 
-    plot_simple_mel(args.audio, args.out)
+    #plot_simple_mel(args.audio, args.out)
     #audio = "/home/rosen/Project/StableTTS/result/ddpm_dit_cross/0019_001453.wav"
     # === Create 2x2 subplots ===
 
+    log_paths = [
+        "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v10/tensorboard",
+        "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v29/tensorboard",
+    ]
+    labels = ["Semantic Style", "Semantic-Prosodic Style"]
+    plot_multiple_sty_losses(log_paths, labels, loss_tag='train/F0_loss',
+                             window_size=30, save_name="comparison_F0_loss.pdf",
+                             ylabel="F0 Loss")
+
+    plot_multiple_sty_losses(log_paths, labels, loss_tag='train/norm_loss',
+                             window_size=30, save_name="comparison_energy_loss.pdf",
+                             ylabel="Energy Loss")
     """
     fig, axs = plt.subplots(2, 2, figsize=(15, 10))
     for i in range(2):

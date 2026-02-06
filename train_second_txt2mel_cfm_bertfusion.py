@@ -24,7 +24,7 @@ from optimizers import build_optimizer
 from attrdict import AttrDict
 from Modules.hifi_gan.vocoder import Generator
 import glob
-from utils import r1_reg, adv_loss
+from utils import r1_reg, adv_loss, get_cut_phonemes_by_cut_f2p_attn
 import json
 from utilities.guide_mask import make_guided_attention_masks2
 
@@ -46,7 +46,7 @@ handler.setLevel(logging.DEBUG)
 logger.addHandler(handler)
 
 @click.command()
-@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm_v28.yml', type=str)
+@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm_v29.yml', type=str)
 def main(config_path):
     torch.manual_seed(0)
     config = yaml.safe_load(open(config_path))
@@ -307,7 +307,7 @@ def main(config_path):
                 loss_sty = 0
                 loss_diff = 0
 
-            # Predicted dur (d) and gd_dur-extended prosody-predicted embedding (p) given semantic embedding (d_en) and prosodic style (s_dur)
+
             d, p = model.predictor(d_en, s_dur, input_lengths, s2s_attn_mono, text_mask)
             mel_len = min(int(mel_input_length.min().item() / 2 - 1), max_len // 2)
             mel_len_st = int(mel_input_length.min().item() / 2 - 1)
@@ -340,22 +340,24 @@ def main(config_path):
             s_dur = model.predictor_encoder(st.unsqueeze(1) if multispeaker else gt.unsqueeze(1))  # *
             s = model.style_encoder(st.unsqueeze(1) if multispeaker else gt.unsqueeze(1))
 
-            # GD, predicted pe, and its loss
+            # predicted F0 and energy by trend and bert
             with torch.no_grad():
                 F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1))
                 N_real = log_norm(gt.unsqueeze(1)).squeeze(1)
-            if "simplefuse" in cond_prosody_type or "temporalAdaIN" in cond_prosody_type:
-                F0_trend = extract_pitch_trend(F0_real, s2s, p_en.size(-1), fmin=50, fmax=600)
-                prob = random.random()
-                F0_trend_drop = True if prob < 0.3 else False
-                uv_masks_frame = uv_masks.unsqueeze(-1).transpose(-1, -2) @ s2s
-                F0_fake, N_fake = model.predictor.F0Ntrain(p_en, F0_trend, s_dur, uv_masks_frame.squeeze(1), drop_trend=F0_trend_drop)
-                ## check u/v match between p_en, and uv_mask
-                #print(p_en[0, 0, :])
-                #print(uv_masks_frame[0, 0, :])
-                # VIS difference of pe_real, pe, and dur_aligned_pe
-            else:
-                F0_fake, N_fake = model.predictor.F0Ntrain(p_en, s_dur)
+            if "bertfusion" in cond_prosody_type:
+                F0_trend_drop = True if random.random() < 0.2 else False
+                cut_phn_start, cut_phn_end, _, _ = get_phone_range_by_cut_f2p_attn(s2s)
+                s2s_cutphone = s2s[:, cut_phn_start:cut_phn_end, :]
+                uv_masks_cut = uv_masks[:, cut_phn_start:cut_phn_end]
+                trd = model.predictor.trd_encoding(F0_real, s2s_cutphone, uv_masks_cut, drop_trend=F0_trend_drop)  # bert_trend_fused embeds
+                p_en = torch.cat([p_en, trd], dim=1) #
+                """SANITY CHECK"""
+                #print("p_en mean, std, min, max: ", p_en.mean().item(), p_en.std().item(), p_en.min().item(), p_en.max().item())
+                #print("trd mean, std, min, max: ", trd.mean().item(), trd.std().item(), trd.min().item(), trd.max().item())
+                #print("p_en:", p_en[0, 0, :])
+                #print("trd:", trd[0, 0, :])
+
+            F0_fake, N_fake = model.predictor.F0Ntrain(p_en, s_dur)
             loss_F0_rec = (F.smooth_l1_loss(F0_real, F0_fake)) / 10
             loss_norm_rec = F.smooth_l1_loss(N_real, N_fake)
             # update F0, N stats
@@ -366,8 +368,11 @@ def main(config_path):
 
             # Start training: CFM_loss, dur loss (dur, ce)
             optimizer.zero_grad()
+            #print_gpu_memory("before model.decoder.compute_loss!")
             loss_cfm, attn_maps = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s,
                                                              seq_style=pe, p_mask=~mel_cut_mask.unsqueeze(1))
+            #print_gpu_memory("after model.decoder.compute_loss!")
+
             loss_ce, loss_dur = 0, 0
             ## Predicted (d) and gd (d_gt) dur
             for _s2s_pred, _text_input, _text_length in zip(d, (d_gt), input_lengths):
@@ -447,7 +452,6 @@ def main(config_path):
         # start evaluation loss, and predict demo speech with gd_dur and pred_dur
         with torch.no_grad():
             iters_test = 0
-            VIS_RESULT = True
             for batch_idx, batch in enumerate(val_dataloader):
                 optimizer.zero_grad()
                 try:
@@ -459,7 +463,7 @@ def main(config_path):
                         text_mask = length_to_mask(input_lengths).to(texts.device)
                         _, _, s2s_attn = model.text_aligner(mels, mask, texts)
                         s2s_attn = s2s_attn.transpose(-1, -2)
-                        s2s_attn = s2s_attn[..., 1:]
+                        s2s_attn = s2s_attn[..., 1:]  # remove 1st phn
                         s2s_attn = s2s_attn.transpose(-1, -2)
                         mask_ST = mask_from_lens(s2s_attn, input_lengths, mel_input_length // (2 ** n_down))
                         s2s_attn_mono = maximum_path(s2s_attn, mask_ST)
@@ -490,7 +494,6 @@ def main(config_path):
                     bert_dur = model.bert(texts, attention_mask=(~text_mask).int())
                     d_en = model.bert_encoder(bert_dur).transpose(-1, -2)
                     d, p = model.predictor(d_en, s, input_lengths, s2s_attn_mono, text_mask)
-                    uv_masks_frame = (uv_masks.unsqueeze(-1).transpose(-1, -2) @ s2s_attn_mono) # same length with p
 
                     # get clips
                     mel_len = int(mel_input_length.min().item() / 2 - 1)
@@ -502,7 +505,6 @@ def main(config_path):
                         en.append(asr[bib, :, random_start:random_start + mel_len])
                         s2s.append(s2s_attn_mono[bib, :, random_start:random_start + mel_len])
                         p_en.append(p[bib, :, random_start:random_start + mel_len])
-                        uv.append(uv_masks_frame[bib, :, random_start:random_start + mel_len])
                         gt.append(mels[bib, :, (random_start * 2):((random_start + mel_len) * 2)])
                         y = waves[bib][(random_start * 2) * 300:((random_start + mel_len) * 2) * 300]
                         wav.append(torch.from_numpy(y).to(device))
@@ -510,20 +512,25 @@ def main(config_path):
                     wav = torch.stack(wav).float().detach()
                     en = torch.stack(en)
                     p_en = torch.stack(p_en)
-                    uv = torch.stack(uv)
                     gt = torch.stack(gt).detach()
                     s2s = torch.stack(s2s).detach()
 
                     s = model.predictor_encoder(gt.unsqueeze(1))
 
-                    # gt F0, energy
+                    # predicted F0 and energy by trend and bert
                     F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1))
                     N_real = log_norm(gt.unsqueeze(1)).squeeze(1)
-                    if "simplefuse" in cond_prosody_type or "temporalAdaIN" in cond_prosody_type:
-                        F0_trend = extract_pitch_trend(F0_real, s2s, p_en.size(-1), fmin=50, fmax=600)
-                        F0_fake, N_fake = model.predictor.F0Ntrain(p_en, F0_trend, s, uv.squeeze(1))
-                    else:
-                        F0_fake, N_fake = model.predictor.F0Ntrain(p_en, s)
+                    if "bertfusion" in cond_prosody_type:
+                        cut_phn_start, cut_phn_end, _, _ = get_phone_range_by_cut_f2p_attn(s2s)
+                        s2s_cutphone = s2s[:, cut_phn_start:cut_phn_end, :]
+                        uv_masks_cut = uv_masks[:, cut_phn_start:cut_phn_end]
+                        uv_mask_phn_ref, s2s_ref = uv_masks_cut.clone(), s2s_cutphone.clone()
+                        #torch.set_printoptions(threshold=10000)  # Adjust the number based on your tensor size
+                        #print(s2s_cutphone[:3, :100, :])
+                        trd = model.predictor.trd_encoding(F0_real, s2s_cutphone, uv_masks_cut, uv_mask_phn_ref, s2s_ref, drop_trend=False)  # bert_trend_fused embeds
+                        p_en = torch.cat([p_en, trd], dim=1)  #
+
+                    F0_fake, N_fake = model.predictor.F0Ntrain(p_en, s)
 
                     loss_dur = 0
                     for _s2s_pred, _text_input, _text_length in zip(d, (d_gt), input_lengths):
@@ -573,7 +580,7 @@ def main(config_path):
                     mel_length = int(mel_input_length[bib].item())
                     gt = mels[bib, :, :mel_length].unsqueeze(0)
                     en = asr[bib, :, :mel_length // 2].unsqueeze(0)
-                    s2s_slice = s2s_attn_mono[bib, :, :mel_length].unsqueeze(0)
+                    s2s_slice = s2s_attn_mono[bib, :, :mel_length // 2].unsqueeze(0)  # asr related sequence is half of mel
 
                     F0_real, _, _ = model.pitch_extractor(gt.unsqueeze(1))
                     #F0_real = F0_real.unsqueeze(0)
@@ -592,37 +599,26 @@ def main(config_path):
                     writer.add_audio('eval/y' + str(bib), y_g_hat.cpu().numpy().squeeze(), epoch, sample_rate=sr)
 
                     s_dur = model.predictor_encoder(gt.unsqueeze(1))
-                    p_en = p[bib, :, :mel_length // 2].unsqueeze(0)
-                    uv_masks_frame_sample = uv_masks_frame[bib, :, :mel_length // 2]
+                    p_en = p[bib, :, :mel_length // 2].unsqueeze(0)  # asr related sequence is half of mel
 
-                    if "simplefuse" in cond_prosody_type or "temporalAdaIN" in cond_prosody_type:
-                        F0_trend = extract_pitch_trend(F0_real, s2s_slice, p_en.size(-1), fmin=50, fmax=600)
-                        F0_fake, N_fake = model.predictor.F0Ntrain(p_en, F0_trend, s_dur, uv_masks_frame_sample)
-                    else:
-                        F0_fake, N_fake = model.predictor.F0Ntrain(p_en, s_dur)
+                    if "bertfusion" in cond_prosody_type:
+                        cut_phn_start, cut_phn_end, _, _ = get_phone_range_by_cut_f2p_attn(s2s_slice.unsqueeze(0))
+                        s2s_cutphone = s2s_slice[:, cut_phn_start:cut_phn_end, :]
+                        uv_masks_cut = uv_masks[bib].unsqueeze(0)[:, cut_phn_start:cut_phn_end]
+                        uv_masks_cut_tgt, s2s_cutphone_tgt = uv_masks_cut.clone(), s2s_cutphone.clone()
+                        trd = model.predictor.trd_encoding(F0_real, s2s_cutphone, uv_masks_cut, uv_masks_cut_tgt,
+                                                           s2s_cutphone_tgt, drop_trend=False)  # bert_trend_fused embeds
+                        p_en = torch.cat([p_en, trd], dim=1)  #
 
-                    #pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
-                    if cond_prosody_type == "hierstyle":
-                        pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
-                        s2s_slice = F.interpolate(s2s_slice, size=F0_real.size(-1), mode="nearest")
-                        _, _, N_real_phone, F0_real_phone = frame_to_phoneme_avg_and_back_binary(real_norm, F0_real, s2s_slice)
-                        pe_real = torch.cat([N_real_phone.unsqueeze(1), F0_real_phone.unsqueeze(1)], dim=1)
-
-                        # dur alignment of pe_real to pe given pe_voice_mask
-                        pe_voice_mask = (pe[:, 1, :] >= 50.0) & (pe[:, 1, :] <= 600.0) & torch.isfinite(pe[:, 1, :])
-                        pe_real = align_dur2(pe_real, pe_voice_mask.unsqueeze(1), pitch_idx=1)
-                    else:
-                        pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
-                        pe_real = None
+                    F0_fake, N_fake = model.predictor.F0Ntrain(p_en, s_dur)
+                    pe = torch.cat([N_fake.unsqueeze(1), F0_fake.unsqueeze(1)], dim=1)
 
                     cfg_strength = 3 if cfg_dropout > 0 else None
                     mel_pred, _ = model.decoder(mu=en, mask=mask, n_timesteps=200, temperature=1.0, c=s, seq_style=pe,
                                                 p_mask=mask, cfg_strength=cfg_strength)
-
                     # add vocoder
                     c_pred = mel_pred.squeeze()
                     y_pred = generator(c_pred.unsqueeze(0))
-
                     writer.add_audio('pred/y' + str(bib), y_pred.cpu().numpy().squeeze(), epoch, sample_rate=sr)  # why only show epoch14?
 
                     if epoch == 0:
@@ -658,13 +654,10 @@ def main(config_path):
                     d = model.predictor.text_encoder(d_en[bib, :, :input_lengths[bib]].unsqueeze(0),
                                                      s, input_lengths[bib, ...].unsqueeze(0),
                                                      text_mask[bib, :input_lengths[bib]].unsqueeze(0))
-
                     x, _ = model.predictor.lstm(d)
                     duration = model.predictor.duration_proj(x)
-
                     duration = torch.sigmoid(duration).sum(axis=-1)
                     pred_dur = torch.round(duration.squeeze()).clamp(min=1)
-
                     pred_dur[-1] += 5
 
                     pred_aln_trg = torch.zeros(input_lengths[bib], int(pred_dur.sum().data))
@@ -675,37 +668,18 @@ def main(config_path):
 
                     # encode prosody
                     en = (d.transpose(-1, -2) @ pred_aln_trg.unsqueeze(0).to(texts.device))
-                    uv_masks_frame_sample = (uv_masks_frame[bib, :, :input_lengths[bib]] @ pred_aln_trg.unsqueeze(0).to(texts.device))
+                    if "bertfusion" in cond_prosody_type:
+                        uv_masks_cut_tgt = uv_masks[bib].unsqueeze(0).clone()
+                        trd = model.predictor.trd_encoding(F0_real[bib][None, ...], s2s[bib].unsqueeze(0),
+                                                           uv_masks[bib].unsqueeze(0), uv_masks_cut_tgt,
+                                                           pred_aln_trg.unsqueeze(0).to(texts.device),
+                                                           drop_trend=False)  # bert_trend_fused embeds
+                        en = torch.cat([en, trd], dim=1)  #
 
-                    if "simplefuse" in cond_prosody_type or "temporalAdaIN" in cond_prosody_type:
-                        F0_trend = extract_pitch_trend(F0_real, s2s, en.size(-1), fmin=50, fmax=600)
-                        F0_trend = F0_trend[bib][None, ...] # (1, 1, T)
-                        F0_pred, N_pred = model.predictor.F0Ntrain(en, F0_trend, s, uv_masks_frame_sample.squeeze(1), drop_trend=False) # (1, T)
-
-                        if VIS_RESULT:
-                            if not osp.exists(os.path.join(log_dir, "img")): os.makedirs(os.path.join(log_dir, "img"), exist_ok=True)
-                            from exp.vis2 import plot_f0_comparison
-                            for i in range(1):
-                                plot_f0_comparison(F0_real[i], torch.exp(F0_trend[i].squeeze(0)), uv_masks_frame_sample[i].squeeze(0) * 100,
-                                                   out_path=os.path.join(log_dir, f"img/pitch_real_pred_mask_sample{i}_epoch{epoch}.png"),
-                                                   labels=("pitch_real", "pitch_trend", "pitch_cond_mask"))
-                                torch.manual_seed(0)
-                                F0_pred, N_pred = model.predictor.F0Ntrain(en, F0_trend, s,
-                                                                           uv_masks_frame_sample.squeeze(1),
-                                                                           drop_trend=False)
-                                torch.manual_seed(0)
-                                F0_fake_Trend, _ = model.predictor.F0Ntrain(en, F0_trend, s,
-                                                                            uv_masks_frame_sample.squeeze(1),
-                                                                            drop_trend=True)
-                                plot_f0_comparison(F0_real[i], F0_pred[i], F0_fake_Trend[i].squeeze(0),
-                                                   out_path=os.path.join(log_dir, f"img/pitch_real_notrend_trend_sample{i}_epoch{epoch}.png"),
-                                                   labels=("pitch_real", "pitch_pred_notrend", "pitch_pred_trend"))                        # test true/false
-                        VIS_RESULT = False
-                    else:
-                        F0_pred, N_pred = model.predictor.F0Ntrain(en, s) # (1, T)
+                    # Predict pitch
+                    F0_pred, N_pred = model.predictor.F0Ntrain(en, s) # (1, T)
 
                     cfg_strength = 3 if cfg_dropout > 0 else None
-
                     pe = torch.cat([N_pred.unsqueeze(1), F0_pred.unsqueeze(1)], dim=1)
                     out, _ = model.decoder(mu=t_en[bib, :, :input_lengths[bib]].unsqueeze(0) @ pred_aln_trg.unsqueeze(0).to(texts.device),
                                            mask=mask, n_timesteps=200, temperature=1.0, c=ref, seq_style=pe, p_mask=mask,

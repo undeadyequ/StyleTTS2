@@ -96,17 +96,9 @@ def statcz_psd_mcd(prosody_dict, exclude_zero=False):
                         assert len(ref_i_index) == 1
                         ref_i_index = ref_i_index[0]
 
-                        # deal with nan and 0
-                        syn_pitch_contour, ref_pitch_contour = (interpolate_nan(psd_phone_sid["pitch"][i]),
-                                                                interpolate_nan(prosody_dict[spk][emo]["reference"]["pitch"][ref_i_index]))
-                        syn_energy_contour, ref_energy_contour = (interpolate_nan(psd_phone_sid["energy"][i]),
-                                                                  interpolate_nan(prosody_dict[spk][emo]["reference"]["energy"][ref_i_index]))
-                        if exclude_zero:
-                            syn_pitch_contour, syn_energy_contour = interpolate_unvoiced(syn_pitch_contour, syn_energy_contour, rm_approach=False)
-                            ref_pitch_contour, ref_energy_contour = interpolate_unvoiced(ref_pitch_contour, ref_energy_contour, rm_approach=False)
-                        #print("pitch diff", syn_pitch_contour[:30], ref_pitch_contour[:30])
-                        p_diff, _ = dtw_sim_score(syn_pitch_contour, ref_pitch_contour)
-                        e_diff, _ = dtw_sim_score(syn_energy_contour, ref_energy_contour)
+                        p_diff, e_diff = calcualte_pitch_energy_dtw(prosody_dict[spk][emo]["reference"]["pitch"][ref_i_index], psd_phone_sid["pitch"][i],
+                                                   prosody_dict[spk][emo]["reference"]["energy"][ref_i_index], psd_phone_sid["energy"][i],
+                                                   need_interp_unvoice=exclude_zero)
                         p_diffs.append(p_diff)
                         e_diffs.append(e_diff)
                     p_diffs_mean = mean_func(p_diffs)
@@ -131,6 +123,22 @@ def statcz_psd_mcd(prosody_dict, exclude_zero=False):
             averaged = [mean(col) for col in zip(*values)]
             result[emotion][model] = averaged
     return psd_ctw_res, psd_mcd_stat_res, result
+
+
+def calcualte_pitch_energy_dtw(pith_ref, pitch_syn, energy_ref, energy_syn, need_interp_unvoice=True):
+    # deal with nan and 0
+    syn_pitch_contour, ref_pitch_contour = (interpolate_nan(pitch_syn), interpolate_nan(pith_ref))
+    syn_energy_contour, ref_energy_contour = (interpolate_nan(energy_syn),
+                                              interpolate_nan(energy_ref))
+    if need_interp_unvoice:
+        syn_pitch_contour, syn_energy_contour = interpolate_unvoiced(syn_pitch_contour, syn_energy_contour,
+                                                                     rm_approach=False)
+        ref_pitch_contour, ref_energy_contour = interpolate_unvoiced(ref_pitch_contour, ref_energy_contour,
+                                                                     rm_approach=False)
+    # print("pitch diff", syn_pitch_contour[:30], ref_pitch_contour[:30])
+    p_diff, _ = dtw_sim_score(syn_pitch_contour, ref_pitch_contour)
+    e_diff, _ = dtw_sim_score(syn_energy_contour, ref_energy_contour)
+    return p_diff, e_diff
 
 
 def statcz_psd_mcd_fine_class2(prosody_dict, exclude_zero=False):

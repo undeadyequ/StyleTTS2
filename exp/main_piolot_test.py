@@ -238,12 +238,12 @@ def save_pitch_plot_voiced_only(
 # Main evaluation
 # -----------------------------
 def main():
-    speech_dir = "/home/rosen/Project/StyleTTS2/res/piolot_test"
+    speech_dir = "/home/rosen/ckpt/exp2/mdit_tts_esd"
     ap = argparse.ArgumentParser()
-    ap.add_argument("--modelA_dir", type=str, required=False, default=f"{speech_dir}/monoDiTmono/sharpLastPreserve_alpha0.3_beta0.7_mono02")
-    ap.add_argument("--modelB_dir", type=str, required=False, default=f"{speech_dir}/monoDiT/sharpLastPreserve_alpha0.3_beta0.7")
-    ap.add_argument("--ref_dir", type=str, required=False, default=f"{speech_dir}/monoDiT/reference_esd")
-    ap.add_argument("--out_dir", type=str, default=f"{speech_dir}/sharpLastPreserve_alpha0.3_beta0.7_result_mono02")
+    ap.add_argument("--modelA_dir", type=str, required=False, default=f"{speech_dir}/decodit_cfm_v29/random")
+    ap.add_argument("--modelB_dir", type=str, required=False, default=f"{speech_dir}/monoDiT/random")
+    ap.add_argument("--ref_dir", type=str, required=False, default=f"{speech_dir}/reference/random")
+    ap.add_argument("--out_dir", type=str, default=f"{speech_dir}/contour_decodit_cfm_v29_monoDiT")
 
     ap.add_argument("--sr", type=int, default=24000)
     ap.add_argument("--hop_length", type=int, default=300)

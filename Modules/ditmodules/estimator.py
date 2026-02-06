@@ -136,7 +136,7 @@ class Decoder(nn.Module):
             nn.init.constant_(block.block.adaLN_modulation[-1].weight, 0)
             nn.init.constant_(block.block.adaLN_modulation[-1].bias, 0)
 
-    def forward(self, t, x, mask, mu, c, seq_style=None, p_mask=None, return_attn_map=True, q_f_pos=None, k_f_pos=None,
+    def forward(self, t, x, mask, mu, c, seq_style=None, p_mask=None, return_attn_map=False, q_f_pos=None, k_f_pos=None,
                 regularize_attn_map=None):
         """Forward pass of the DiT model.
 
@@ -169,22 +169,22 @@ class Decoder(nn.Module):
         lsc_outputs = [] if self.use_lsc else None
         attn_maps = []
         for idx, block in enumerate(self.blocks):
-            # add long skip connection, see https://arxiv.org/pdf/2209.12152 for more details
             if self.use_lsc:
                 if idx < self.n_lsc_layers:
                     lsc_outputs.append(x)
                 else:
                     #print(f"block: {idx}: before lsc:", torch.mean(torch.abs(x), dim=1))
-                    x = torch.cat((x, lsc_outputs.pop()), dim=1)
+                    x = torch.cat((x, lsc_outputs.pop()), dim=1) # add long skip connection, see https://arxiv.org/pdf/2209.12152 for more details
                     x = self.lsc_layers[idx - self.n_lsc_layers](x)
             ############### Check code #######33
             #print(f"block: {idx}: before block:", torch.mean(torch.abs(x), dim=1))
             x, attn_map = block(x, c, t, mask, seq_style, p_mask, q_f_pos=q_f_pos, k_f_pos=k_f_pos, regularize_attn_map=regularize_attn_map)
-            attn_maps.append(attn_map)
+            if return_attn_map:
+                attn_maps.append(attn_map)
         output = self.final_proj(x * mask)
-        if attn_maps[0] is not None:
-            attn_maps = torch.stack(attn_maps, dim=0)
+
         if return_attn_map:
+            attn_maps = torch.stack(attn_maps, dim=0)
             return output * mask, attn_maps
         else:
-            return output * mask
+            return output * mask # only output for ode trajectory

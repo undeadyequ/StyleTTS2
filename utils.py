@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from munch import Munch
 import os
 from typing import Tuple
-
+from torch.nn.utils.rnn import pad_sequence
 
 def maximum_path(neg_cent, mask):
     """ Cython optimized version.
@@ -295,7 +295,7 @@ def extract_pitch_trend(
     fmax: float = 600.0,
 ):
     """
-    Extract phoneme-level pitch trend in log-F0 space.
+    Extract frame-level pitch trend in log-F0 space.
 
     Steps:
       0) voiced mask from raw F0
@@ -308,7 +308,7 @@ def extract_pitch_trend(
     Return:
       log_f0_trend: [B, 1, tareget_len]
     """
-    attn_f2p = F.interpolate(attn_f2p, size=pitch_f.size(-1), mode="nearest")
+    attn_f2p = F.interpolate(attn_f2p, size=pitch_f.size(-1), mode="nearest")  # critical problem: check if pitch_f is twice length of attn_f2p first, and then upsample
 
     assert pitch_f.ndim == 2, f"pitch_f must be [B,Tf], got {pitch_f.shape}"
     assert attn_f2p.ndim == 3, f"attn_f2p must be [B,Tp,Tf], got {attn_f2p.shape}"
@@ -368,77 +368,217 @@ def extract_pitch_trend(
     return log_f0_filled
 
 
-def make_attn_f2p_from_durations(durs: torch.Tensor) -> torch.Tensor:
+def extract_pitch_trend_v2(
+        pitch_gd_frame: torch.Tensor,  # [B, Tf]  (Hz)
+        attn_f2p_gd: torch.Tensor,  # [B, Tp, Tf] 0/1
+        tgt_frame_len: int,
+        attn_f2p_pred: torch.Tensor = None,  # [B, Tp_syn, Tf_syn] 0/1
+        eps: float = 1e-8,
+        fmin: float = 50.0,
+        fmax: float = 600.0,
+):
     """
-    durs: [B, Tp] integer durations summing to Tf
-    returns attn_f2p: [B, Tp, Tf] with 0/1
+    Extract phoneme-level pitch trend in log-F0 space.
     """
-    B, Tp = durs.shape
-    Tf = int(durs.sum(dim=1)[0].item())
-    attn = torch.zeros(B, Tp, Tf, device=durs.device, dtype=torch.float32)
-    for b in range(B):
-        t0 = 0
-        for p in range(Tp):
-            d = int(durs[b, p].item())
-            attn[b, p, t0:t0+d] = 1.0
-            t0 += d
-        assert t0 == Tf
-    return attn
+    # Ensure ground truth attention matches the frame length of reference audio
+    attn_f2p_gd = F.interpolate(attn_f2p_gd, size=pitch_gd_frame.size(-1), mode="nearest")
+    B, Tf = pitch_gd_frame.shape
+
+    # ------------------------------------------------
+    # Step 0 & 1: Voice Masking and Log Transform
+    # ------------------------------------------------
+    voiced = (pitch_gd_frame >= fmin) & (pitch_gd_frame <= fmax) & torch.isfinite(pitch_gd_frame)
+    pitch_f_safe = pitch_gd_frame.clamp_min(fmin)
+    log_f0 = torch.log(pitch_f_safe)  # [B, Tf]
+
+    # ------------------------------------------------
+    # Step 2: Reference Frame -> Reference Phoneme Mean
+    # ------------------------------------------------
+    # Map frame-level log-F0 to phoneme-level using ground truth alignment
+    w_gd = attn_f2p_gd.transpose(1, 2).to(log_f0.dtype)  # [B, Tf, Tp]
+    denom_gd = w_gd.sum(dim=1).clamp_min(1.0)  # [B, Tp]
+    log_f0_p = torch.einsum("bt,btp->bp", log_f0, w_gd) / (denom_gd + eps)  # [B, Tp]
+
+    # ------------------------------------------------
+    # Step 3 & 4: Logic Branching based on attn_f2p_pred
+    # ------------------------------------------------
+    if attn_f2p_pred is None:
+        # CASE 1: Training / Same-length reference
+        # Broadcast reference phoneme means back to reference frames
+        log_f0_back = torch.einsum("bp,btp->bt", log_f0_p, w_gd)  # [B, Tf]
+        current_voiced_mask = voiced
+    else:
+        # CASE 2: Inference / Style Transfer (Cross-length)
+        # Tp_syn is the number of phonemes in the target text
+        Tp_syn = attn_f2p_pred.size(1)
+        Tf_syn = attn_f2p_pred.size(2)
+
+        # 3a) Interpolate phoneme-level pitch from Tp -> Tp_syn
+        # We use linear interpolation to stretch/squeeze the pitch contour across phonemes
+        log_f0_p_syn = F.interpolate(
+            log_f0_p.unsqueeze(1),
+            size=Tp_syn,
+            mode="linear",
+            align_corners=True
+        ).squeeze(1)  # [B, Tp_syn]
+
+        # 4a) Broadcast interpolated phoneme means to target frames
+        w_pred = attn_f2p_pred.transpose(1, 2).to(log_f0.dtype)  # [B, Tf_syn, Tp_syn]
+        log_f0_back = torch.einsum("bp,btp->bt", log_f0_p_syn, w_pred)  # [B, Tf_syn]
+
+        # In inference, we don't have a frame-level voiced mask for target frames,
+        # so we rely on Step 4's gap filling to handle any zeros created by broadcast.
+        current_voiced_mask = (log_f0_back > 0)
+
+        # ------------------------------------------------
+    # Step 5: Interpolate Unvoiced Gaps
+    # ------------------------------------------------
+    log_f0_back = log_f0_back.unsqueeze(1)  # [B, 1, T]
+    log_f0_filled = log_f0_back.clone()
+
+    # Fill gaps to create a continuous "Trend" line
+    log_f0_filled[:, 0, :] = _interp_unvoiced_1d(
+        log_f0_back[:, 0, :], current_voiced_mask
+    )
+
+    # ------------------------------------------------
+    # Step 6: Final Resample to Target Bert length
+    # ------------------------------------------------
+    if log_f0_filled.size(-1) != tgt_frame_len:
+        log_f0_filled = F.interpolate(
+            log_f0_filled,
+            size=tgt_frame_len,
+            mode="linear",
+            align_corners=True,
+        )
+
+    return log_f0_filled
 
 
-def test_extract_pitch_trend_logf0(device="cpu"):
-    torch.manual_seed(0)
-    B, Tp = 2, 6
+def get_phone_range_by_cut_f2p_attn(f2p_attn):
+    """
+    get batch-level phone range, and sample-level phone range.
+    f2p_attn: (B, Tp, Tf)
+    Returns: phn_start [B], phn_end [B]
+    """
+    phoneme_mask = f2p_attn.sum(dim=-1) > 0  # [B, Tp]
+    phn_start = torch.argmax(phoneme_mask.float(), dim=-1)
 
-    # durations -> Tf (keep Tf reasonably large for visualization; but still robust)
-    durs = torch.randint(6, 12, (B, Tp), device=device)
-    durs[1] = durs[0]
-    Tf = int(durs[0].sum().item())
+    Tp = phoneme_mask.size(-1)
+    phn_end = (Tp - 1) - torch.argmax(phoneme_mask.flip(dims=[-1]).float(), dim=-1)
 
-    attn_f2p = make_attn_f2p_from_durations(durs)  # [B,Tp,Tf]
+    batch_phn_start = torch.min(phn_start)
+    batch_phn_end = torch.max(phn_end)
+    return batch_phn_start, batch_phn_end, phn_start, phn_end
 
-    # synthetic pitch (Hz)
-    t = torch.linspace(0, 1, Tf, device=device)
-    pitch = 180.0 + 40.0 * torch.sin(2 * torch.pi * 2 * t)  # [Tf]
-    pitch = pitch.unsqueeze(0).repeat(B, 1)                 # [B,Tf]
 
-    # Insert "unvoiced junk" segments safely within Tf
-    def set_junk(start: int, length: int, max_hz: float):
-        start = max(0, min(start, Tf))
-        end = max(start, min(start + length, Tf))
-        if end > start:
-            pitch[:, start:end] = torch.rand(B, end - start, device=device) * max_hz
+def get_cut_phonemes_by_cut_f2p_attn(phonemes, f2p_attn):
+    """
+    phonemes: (B, Tp) - Phoneme IDs
+    f2p_attn: (B, Tp, Tf) - Monotonic attention
 
-    # two junk regions (sizes auto-adjust if Tf is small)
-    set_junk(start=Tf // 4, length=max(2, Tf // 10), max_hz=3.0)
-    set_junk(start=Tf * 3 // 4, length=max(2, Tf // 12), max_hz=15.0)
+    Returns: (B, Tp) - Same size as input, but indices outside the
+                      attention window are set to 0.
+    """
+    B, Tp = phonemes.shape
+    phn_start, phn_end = get_phone_range_by_cut_f2p_attn(f2p_attn)
 
-    tareget_len = Tp
-    log_trend = extract_pitch_trend(pitch, attn_f2p, tareget_len)
+    # Create a grid of indices [1, Tp] -> [B, Tp]
+    indices = torch.arange(Tp, device=phonemes.device).unsqueeze(0).expand(B, Tp)
 
-    print("Tf =", Tf)
-    print("pitch:", pitch.shape)
-    print("attn_f2p:", attn_f2p.shape)
-    print("log_trend:", log_trend.shape)
+    # Create the window mask: True if start <= index <= end
+    # We use .unsqueeze(1) to ensure broadcasting works against the indices grid
+    mask = (indices >= phn_start.unsqueeze(1)) & (indices <= phn_end.unsqueeze(1))
 
-    assert log_trend.shape == (B, 1, tareget_len)
-    assert torch.isfinite(log_trend).all()
-    print("OK")
+    # Apply mask: Keep original phoneme ID if in window, else 0
+    # .long() converts the boolean mask to 1s and 0s
+    return phonemes * mask.long()
 
+
+def align_attention_to_zero(f2p_attn_pred):
+    """
+    f2p_attn_pred: (B, Tp, Tf)
+    Returns: aligned_attn (B, new_Tp, new_Tf)
+    """
+    B, Tp, Tf = f2p_attn_pred.shape
+    device = f2p_attn_pred.device
+
+    cropped_samples = []
+    max_p = 0
+    max_f = 0
+
+    for i in range(B):
+        # Find all indices where attn is 1
+        indices = torch.nonzero(f2p_attn_pred[i])
+
+        if indices.numel() == 0:
+            # Handle empty sample case
+            cropped_samples.append(torch.zeros((1, 1), device=device))
+            continue
+
+        # Get boundaries
+        s_p, s_f = indices.min(dim=0)[0]
+        e_p, e_f = indices.max(dim=0)[0] + 1
+
+        # Crop the active region
+        crop = f2p_attn_pred[i, s_p:e_p, s_f:e_f]
+        cropped_samples.append(crop)
+
+        # Update global max for the new batch shape
+        max_p = max(max_p, crop.size(0))
+        max_f = max(max_f, crop.size(1))
+
+    # Create new aligned batch tensor
+    aligned_attn = torch.zeros((B, max_p, max_f), device=device, dtype=f2p_attn_pred.dtype)
+
+    for i, crop in enumerate(cropped_samples):
+        p_len, f_len = crop.shape
+        aligned_attn[i, :p_len, :f_len] = crop
+
+    return aligned_attn
+
+
+def print_gpu_memory(tag=""):
+    """Print current GPU memory usage"""
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+        reserved = torch.cuda.memory_reserved() / 1024**3    # GB
+        max_allocated = torch.cuda.max_memory_allocated() / 1024**3
+        print(f"[{tag}] Allocated: {allocated:.2f}GB | Reserved: {reserved:.2f}GB | Max: {max_allocated:.2f}GB")
 
 if __name__ == '__main__':
     B, Tp = 2, 6
     Tf = 5
-    """
+
     attn = torch.tensor([[
         [0, 0, 0, 0, 0],
         [1, 1, 0, 0, 0],
         [0, 0, 1, 1, 0],
         [0, 0, 0, 0, 1],
         [0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0]
+    ],
+        [[1, 0, 0, 0, 0],
+        [0, 1, 0, 0, 0],
+        [0, 0, 1, 0, 0],
+        [0, 0, 0, 1, 0],
+        [0, 0, 0, 0, 1],
         [0, 0, 0, 0, 0],
-    ]], dtype=torch.int64)
+        ]], dtype=torch.int64)
 
+    uv_mask = torch.tensor([
+        [1, 0, 1, 1, 1, 1],
+        [1, 0, 1, 0, 1, 1],
+        ])
+
+    cut_uv_mask_gd = torch.tensor([[
+        0, 0, 1, 1, 0, 0
+    ]])
+
+    cut_uv_mask = get_phone_range_by_cut_f2p_attn(attn)
+    print(cut_uv_mask)
+
+    """
     # sanity: each frame assigned to exactly 1 phoneme
 
     pitch_f = 50 + 250 * torch.rand(B, Tf)
@@ -476,6 +616,4 @@ if __name__ == '__main__':
     print(pe_real)  # [B,2,T]
     print(pe_proc)
     """
-    test_extract_pitch_trend_logf0(
-        device="cuda" if torch.cuda.is_available() else "cpu"
-    )
+    pass

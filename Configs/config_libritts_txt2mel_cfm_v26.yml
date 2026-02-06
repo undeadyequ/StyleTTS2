@@ -1,6 +1,6 @@
 ## bin = 8
 
-log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v24"   # CHANGE
+log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v26"   # CHANGE
 first_stage_path: "first_stage.pth"
 data_ratio: 1  # 0.005  0.6
 save_freq: 2
@@ -11,7 +11,7 @@ epochs_2nd: 80 # number of peochs for second stage training (joint training)
 batch_size: 16  # 1st: 24?32?, 2nd: 16
 max_len: 600 # maximum number of frames 600
 #pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v21/epoch_2nd_00024.pth"
-pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v24/epoch_2nd_00012.pth"
+pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v26/epoch_2nd_00014.pth"
 second_stage_load_pretrained: true # set to true if the pre-trained model is for 2nd stage
 load_only_params: false # set to true if do not want to load epoch numbers and optimizer parameters
 

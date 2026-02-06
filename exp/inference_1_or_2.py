@@ -6,8 +6,6 @@ from itertools import accumulate
 import torch
 import sys
 
-from soxr import resample
-
 sys.path.append("../")
 
 torch.backends.cudnn.benchmark = False
@@ -378,7 +376,6 @@ def inference_second(text, ref_wav, model, sampler, model_params,
             mel_rec, attn_maps = model.decoder(mu=asr, mask=None, n_timesteps=200, temperature=1.0, c=ref, seq_style=pe, p_mask=None,
                                                cfg_strength=cfg_strength, mono_guide_delta=mono_guide_delta)
             #mel_rec, attn_maps = model.decoder(mu=asr, mask=None, n_timesteps=200, temperature=1.0, c=ref, seq_style=pe, p_mask=None)
-
         else:
             print(f"{model_params.decoder.type} is not wrong")
 

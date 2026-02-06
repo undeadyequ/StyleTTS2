@@ -26,15 +26,51 @@ def mta_speech(out_sub_dir, tg_dir):
     print("3> python mfa_dir.py {} english_mfa {}".format(out_sub_dir, tg_dir))
     print("####################")
 
+def extract_psd_single(wav_path, mel_config=None, pitch_extractor=None, device=None):
+    """
+    Extract pitch and energy from a single wav file.
+
+    Args:
+        wav_path: Path to the wav file.
+        mel_config: Mel configuration class or instance. Required if pitch_extractor is None.
+        pitch_extractor: Pre-initialized PitEngExtractor. If None, creates one from mel_config.
+        device: Torch device. If None, uses CUDA if available.
+
+    Returns:
+        pitch: Tensor of pitch values.
+        energy: Tensor of energy values.
+    """
+    if device is None:
+        device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
+    if pitch_extractor is None:
+        if mel_config is None:
+            mel_config = MelConfig
+        # Handle both class and instance
+        config_dict = asdict(mel_config()) if callable(mel_config) else asdict(mel_config)
+        pitch_extractor = PitEngExtractor(**config_dict, need_energy=True)
+
+    wav = load_audio(wav_path, device=device)
+    try:
+        pitch, energy = pitch_extractor.forward(wav)
+    except TypeError:
+        pitch, energy = torch.zeros(1), torch.zeros(1)
+        print("{} failed to extract psd".format(wav_path))
+
+    return pitch, energy
+
+
 def extract_psd(mel_config, out_speech_dir, model_n="unkown", save_psd_file="", prosody_dict=dict()):
-    pitch_extractor = PitEngExtractor(**asdict(mel_config()), need_energy=True)
+    # Handle both class and instance
+    config_dict = asdict(mel_config()) if callable(mel_config) else asdict(mel_config)
+    pitch_extractor = PitEngExtractor(**config_dict, need_energy=True)
+
     speech_list = [speech for speech in os.listdir(out_speech_dir) if speech.endswith(".wav")]
     if len(prosody_dict.keys()) == 0:
         prosody_dict = {}
     for speech in speech_list:
         speech_f = os.path.join(out_speech_dir, speech)
         spk, emo_id = speech.split("_")[:2]
-        wav = load_audio(speech_f, device=device)
         if spk not in prosody_dict.keys():
             prosody_dict[spk] = dict()
         if emo_id not in prosody_dict[spk].keys():
@@ -44,11 +80,7 @@ def extract_psd(mel_config, out_speech_dir, model_n="unkown", save_psd_file="", 
                 "pitch": [],
                 "energy": [],
                 "speechid": []}
-        try:
-            pitch, energy = pitch_extractor.forward(wav)  # [2, time // hop_length]
-        except IOError:
-            pitch, energy = torch.zeros(1), torch.zeros(1)
-            print("{} is failed to extract psd".format(speech_f))
+        pitch, energy = extract_psd_single(speech_f, pitch_extractor=pitch_extractor, device=device)
         prosody_dict[spk][emo_id][model_n]["pitch"].append(pitch.tolist())
         prosody_dict[spk][emo_id][model_n]["energy"].append(energy.tolist())
         prosody_dict[spk][emo_id][model_n]["speechid"].append(speech.split(".")[0])
@@ -114,23 +146,22 @@ def extract_psdave(mel_config, cmp_modelnames, out_dir=None):
     return prosody_dict
 
 def extract_psd_fine_class2(mel_config, out_speech_dir, model_n="unkown", save_psd_file="", prosody_dict=dict(), fine_cate="fine"):
-    pitch_extractor = PitEngExtractor(**asdict(mel_config()), need_energy=True)
+    # Handle both class and instance
+    config_dict = asdict(mel_config()) if callable(mel_config) else asdict(mel_config)
+    pitch_extractor = PitEngExtractor(**config_dict, need_energy=True)
+
     speech_list = [speech for speech in os.listdir(out_speech_dir) if speech.endswith(".wav")]
     if len(prosody_dict.keys()) == 0:
         prosody_dict = {}
     for speech in speech_list:
         speech_f = os.path.join(out_speech_dir, speech)
         spk, emo_id = speech.split("_")[:2]
-        wav = load_audio(speech_f, device=device)
         prosody_dict.setdefault(spk, {})
         prosody_dict[spk].setdefault(emo_id, {})
         prosody_dict[spk][emo_id].setdefault(model_n, {})
         prosody_dict[spk][emo_id][model_n].setdefault(fine_cate, {"pitch": [], "energy": [], "speechid": []})
-        try:
-            pitch, energy = pitch_extractor.forward(wav)  # [2, time // hop_length]
-        except IOError:
-            pitch, energy = torch.zeros(1), torch.zeros(1)
-            print("{} is failed to extract psd".format(speech_f))
+
+        pitch, energy = extract_psd_single(speech_f, pitch_extractor=pitch_extractor, device=device)
         prosody_dict[spk][emo_id][model_n][fine_cate]["pitch"].append(pitch.tolist())
         prosody_dict[spk][emo_id][model_n][fine_cate]["energy"].append(energy.tolist())
         prosody_dict[spk][emo_id][model_n][fine_cate]["speechid"].append(speech.split(".")[0])

@@ -1,6 +1,6 @@
 ## bin = 8
 
-log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v24"   # CHANGE
+log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v28"   # CHANGE
 first_stage_path: "first_stage.pth"
 data_ratio: 1  # 0.005  0.6
 save_freq: 2
@@ -11,7 +11,7 @@ epochs_2nd: 80 # number of peochs for second stage training (joint training)
 batch_size: 16  # 1st: 24?32?, 2nd: 16
 max_len: 600 # maximum number of frames 600
 #pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v21/epoch_2nd_00024.pth"
-pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v24/epoch_2nd_00012.pth"
+pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v28/epoch_2nd_00004.pth"
 second_stage_load_pretrained: true # set to true if the pre-trained model is for 2nd stage
 load_only_params: false # set to true if do not want to load epoch numbers and optimizer parameters
 
@@ -49,9 +49,10 @@ model_params:
   n_token: 178 # number of phoneme tokens
   max_dur: 50 # maximum duration of a single phoneme
   style_dim: 128 # style vector size   128 -> 256 -> 128
-  trd_dim: 36
+  trd_dim: 4
+  n_bins: 8
   dropout: 0.2
-  cond_prosody_type: "temporalAdaIN"  # hierstyle, ref, predict, simplefuse
+  cond_prosody_type: "simplefuse_v3"  # hierstyle, ref, predict, simplefuse
   stats_pe: true
   pe_min_max: # place holder, use need set it up after correct one computed, and do again
     - 0

@@ -126,7 +126,8 @@ class PitEngExtractor:
         if wav.ndim == 2:
             wav = wav.squeeze(0)
         wav_np = wav.numpy()  # [l, ]
-        pitch, t = pw.dio(wav_np.astype(np.float64), self.sample_rate, frame_period=self.hop_length / self.sample_rate * 1000)
+        pitch, t = pw.dio(wav_np.astype(np.float64),
+                          self.sample_rate, frame_period=self.hop_length / self.sample_rate * 1000)
         pitch = pw.stonemask(wav_np.astype(np.float64), pitch, t, self.sample_rate)
         if np.sum(pitch != 0) <= 1:
             return None

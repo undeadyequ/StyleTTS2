@@ -232,6 +232,7 @@ def main(
                         f.write(json.dumps(attn_dict, sort_keys=True, indent=4))
             elif "deco" in model_name:
                 print("synthesized by decoDiT model")
+
                 second_model, sampler, model_params = get_second_model_deco(ckpt=ckpt, config_f=model_configs, model_name="mdit_cfm")
                 attn_dict, psdcond_json = syn_speech_by_second_model_deco(
                     synTexts, syn_styles, out_speech_dir, second_model, sampler,  # input, output, model

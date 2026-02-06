@@ -15,8 +15,7 @@ def extract_f0(wav_path, sr=24000, hop_length=300, f0_floor=50.0, f0_ceil=600.0)
     """
     Returns:
       t: (T,) time in seconds
-      f0: (T,) f0 in Hz, unvoiced frames are NaN
-    Uses WORLD (dio + stonemask) if pyworld is installed; otherwise falls back to librosa.yin.
+      f0: (T,) f0 in Hz, unvoiced frames are 0.0
     """
     y, _ = librosa.load(wav_path, sr=sr, mono=True)
 
@@ -33,7 +32,9 @@ def extract_f0(wav_path, sr=24000, hop_length=300, f0_floor=50.0, f0_ceil=600.0)
         )
         f0 = pw.stonemask(y.astype(np.float64), f0, t, sr)
         f0 = f0.astype(np.float64)
-        f0[f0 <= 0] = np.nan
+
+        # CHANGED: Use 0.0 instead of np.nan
+        f0[f0 <= 0] = 0.0
         return t, f0
 
     except Exception:
@@ -52,11 +53,48 @@ def extract_f0(wav_path, sr=24000, hop_length=300, f0_floor=50.0, f0_ceil=600.0)
             rms = np.pad(rms, (0, len(f0) - len(rms)), mode="edge")
         else:
             rms = rms[:len(f0)]
-        thr = np.percentile(rms, 20)  # tune if needed
-        f0[rms < thr] = np.nan
+
+        thr = np.percentile(rms, 20)
+
+        # CHANGED: Use 0.0 instead of np.nan
+        f0[rms < thr] = 0.0
 
         t = np.arange(len(f0)) * hop_length / sr
         return t, f0
+
+
+def extract_energy_spectral(wav_path, sr=24000, hop_length=300, n_fft=2048, win_length=None, center=True,
+                            log_scale=True):
+    """
+    Extracts spectral energy (norm of magnitude) to match PitEngExtractor.
+    """
+    y, _ = librosa.load(wav_path, sr=sr, mono=True)
+
+    # Use win_length if provided, else default to n_fft
+    win = win_length if win_length is not None else n_fft
+
+    # 1. Get Linear Spectrogram (Magnitude)
+    # Equivalent to your class's LinearSpectrogram/torch.stft
+    stft = librosa.stft(
+        y,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        win_length=win,
+        center=center,
+        pad_mode='reflect'
+    )
+    magnitude = np.abs(stft)  # [Freq, Time]
+
+    # 2. Calculate Energy (Norm across frequency bins)
+    # Equivalent to torch.norm(magnitude, dim=1)
+    energy = np.linalg.norm(magnitude, axis=0)
+
+    # 3. Apply Log Scale if requested
+    if log_scale:
+        energy = np.log(energy + 1e-7)
+
+    t = np.arange(len(energy)) * hop_length / sr
+    return t, energy.astype(np.float64)
 
 
 # -------------------------

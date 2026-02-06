@@ -2,13 +2,10 @@ import torch
 import utmosv2
 import random
 import numpy as np
-
 seed = 42
 torch.manual_seed(seed)
 
-for a in range(4):
-    #torch.manual_seed(seed)
-    print(torch.randn(1, 5))
+
 
 
 def a():
@@ -18,7 +15,6 @@ def a():
 def b():
     print(torch.randn(5))
 
-a()
 #torch.cuda.manual_seed_all(seed)
 #np.random.seed(seed)
 #random.seed(seed)
@@ -26,28 +22,57 @@ a()
 # Force deterministic CuDNN ops
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
-"""
-# ---------- Load model ----------
-model = utmosv2.create_model(pretrained=True)
-model.eval()  # disable dropout, batchnorm randomness
+
+if __name__ == '__main__':
+    """
+    for a in range(4):
+        # torch.manual_seed(seed)
+        print(torch.randn(1, 5)) 
+    a()
+    """
+    import math
+    a = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    attn = torch.tensor([[
+        [0, 0, 0, 0, 0],
+        [1, 1, 0, 0, 0],
+        [0, 0, 1, 1, 0],
+        [0, 0, 0, 0, 1],
+        [0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0]
+    ],
+        [[1, 0, 0, 0, 0],
+        [0, 1, 0, 0, 0],
+        [0, 0, 1, 0, 0],
+        [0, 0, 0, 1, 0],
+        [0, 0, 0, 0, 1],
+        [0, 0, 0, 0, 0],
+        ]], dtype=torch.int64)
+    uv_mask = torch.tensor([
+        [1, 0, 1, 1, 1, 1],
+        [1, 0, 1, 0, 1, 1],
+        ])
+
+    cut_uv_mask_gd = torch.tensor([[
+        0, 0, 1, 1, 0, 0
+    ]])
+
+    tgt_lengths_phn = (attn.sum(dim=-1) > 0).sum(dim=-1)
+    #print(tgt_lengths_phn)
+    import torch.nn as nn
+    trd_bins = nn.Parameter(torch.linspace(torch.tensor(50), torch.tensor(600), 32 - 1))
+    print(trd_bins[0], trd_bins[-1])
 
 
-model = utmosv2.create_model(pretrained=True)
+    """
 
-#mos = model.predict(input_path="/path/to/wav/file.wav")
+    """
 
-mos_list = model.predict(input_dir="/home/rosen/Project/StyleTTS2/res")
+    b = np.random.randn(10)
+    """
+    print(b)
+    print("a std: ", np.std(a))
+    print("b std: ", np.std(b))
 
-scores = [item["predicted_mos"] for item in mos_list]
-mean_mos = sum(scores) / len(scores)
-
-
-# 3.00662890625 for styleTTS2
-print(f"Average UTMOS-v2 score: {mean_mos:.4f}")
-
-#
-# Average UTMOS-v2: 2.9714 ± 0.4110
-# Files evaluated: 250
-
-
-"""
+    a = ["asdf", "sdf"]
+    print("".join(a))
+    """
