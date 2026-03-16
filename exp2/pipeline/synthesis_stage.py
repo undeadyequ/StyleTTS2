@@ -66,7 +66,15 @@ class SynthesisStage(PipelineStage):
                     str(model_output_dir), save_attn, save_cond, context)
                 attn_results[model_name] = attn_dict
 
-            elif "deco" in base_model:
+            elif "decoditICL" in base_model:
+                attn_dict, psd_dict = self._infer_decodit_icl(
+                    model_meta, syn_texts, syn_styles,
+                    str(model_output_dir), context
+                )
+                attn_results[model_name] = attn_dict
+                psd_results[model_name] = psd_dict
+
+            elif "decodit_cfm" in base_model:
                 attn_dict, psd_dict = self._infer_decodit(
                     model_meta, syn_texts, syn_styles,
                     str(model_output_dir), save_attn, save_cond, context
@@ -99,14 +107,12 @@ class SynthesisStage(PipelineStage):
 
     def _infer_monodit(self, model_meta, texts, styles, output_dir, save_attn, save_cond, context):
         """Run MonoDiT inference."""
-        from exp.const_param import model_infer_config
-
         ckpt_path = str(model_meta.checkpoint_path)
         config_path = str(model_meta.config_path)
 
         attn_dict = inference_monoDiT(
             ckpt_path, config_path, texts, styles, output_dir,
-            model_infer_config[model_meta.name],
+            model_meta.inference_params,
             save_attn=save_attn,
             save_cond=save_cond
         )
@@ -178,26 +184,63 @@ class SynthesisStage(PipelineStage):
 
         return attn_dict, psd_dict
 
+    def _infer_decodit_icl(self, model_meta, texts, styles, output_dir, context):
+        """Run ICL DecoDiT inference using InferenceAPIICL (CFMDecoderV4)."""
+        from exp.inferenceAPI_bertFusion_icl import InferenceAPIICL
+
+        ckpt_path   = str(model_meta.checkpoint_path)
+        config_path = str(model_meta.config_path)
+        infer_params = model_meta.inference_params
+
+        api = InferenceAPIICL(
+            model_name=model_meta.name,
+            ckpt_path=ckpt_path,
+            config_path=config_path,
+        )
+
+        ref_texts = context.get('ref_texts', [])
+        for ref_style in styles:
+            spk, emo, ref_txt, speech_path = ref_style
+
+            if ref_txt not in ref_texts:
+                ref_texts.append(ref_txt)
+            context['ref_texts'] = ref_texts
+
+            r_id       = ref_texts.index(ref_txt)
+            out_prefix = f'spk{spk}_{emo}_ref{r_id}_syn'
+
+            api.synthesize_batch(
+                texts,
+                speech_path,
+                ref_txt,
+                out_dir=output_dir,
+                out_wav_prefix=out_prefix,
+                beta=infer_params.get('beta', 0.7),
+                diffusion_steps=infer_params.get('diffusion_steps', 5),
+                cfg_strength=infer_params.get('cfg_strength', 3),
+                drop_trend=infer_params.get('drop_trend', False),
+                trend_strength=infer_params.get('trend_strength', 1.0),
+                need_uv_mask=infer_params.get('need_uv_mask', True),
+            )
+
+        return {}, {}
+
     def _infer_styletts2(self, model_meta, texts, styles, output_dir, context):
         """Run StyleTTS2 inference."""
-        from exp.const_param import model_infer_config
-
         ckpt_path = str(model_meta.checkpoint_path)
         config_path = str(model_meta.config_path)
 
         inference_styletts2(
             ckpt_path, config_path, texts, styles, output_dir,
-            model_infer_config[model_meta.name]
+            model_meta.inference_params
         )
 
     def _infer_dit(self, model_meta, texts, styles, output_dir, context):
         """Run DiT inference."""
-        from exp.const_param import model_infer_config
-
         ckpt_path = str(model_meta.checkpoint_path)
         config_path = str(model_meta.config_path)
 
         inference_Dit(
             ckpt_path, config_path, texts, styles, output_dir,
-            model_infer_config[model_meta.name]
+            model_meta.inference_params
         )

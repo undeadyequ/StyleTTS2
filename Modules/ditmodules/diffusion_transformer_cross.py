@@ -125,6 +125,20 @@ class DiTConVBlockCross(nn.Module):
         else:
             x = x + x_cross * x_mask
 
+        # check signal competition
+        #print("gate_mca_norm", torch.norm(gate_mca, p=2, dim=1).mean().item())
+        """
+        shift_mca_norm = torch.norm(shift_mca, p=2, dim=1).mean().item()
+        scale_mca_norm = torch.norm(scale_mca, p=2, dim=1).mean().item()
+        gate_mca_norm = torch.norm(gate_mca, p=2, dim=1).mean().item()
+        shift_msa_norm = torch.norm(shift_msa, p=2, dim=1).mean().item()
+        scale_msa_norm = torch.norm(scale_msa, p=2, dim=1).mean().item()
+        gate_msa_norm = torch.norm(gate_msa, p=2, dim=1).mean().item()
+        print("shift_mca, scale_mca, gate_mca, ", shift_mca_norm, scale_mca_norm, gate_mca_norm, torch.quantile(shift_msa_norm[0], 25, dim=1),
+              torch.quantile(shift_msa_norm[0], 75, dim=1))
+        print("shift_msa, scale_msa, gate_msa, ", shift_msa_norm, scale_msa_norm, gate_msa_norm)
+        """
+
         # mlp
         x = x + gate_mlp * self.mlp(self.modulate(self.norm3(x.transpose(1, 2)).transpose(1, 2), shift_mlp, scale_mlp), x_mask)
         #save_plot(attn_map[0, 0].detach().cpu(), "attn_map2.png")
@@ -133,5 +147,3 @@ class DiTConVBlockCross(nn.Module):
     @staticmethod
     def modulate(x, shift, scale):
         return x * (1 + scale) + shift
-
-

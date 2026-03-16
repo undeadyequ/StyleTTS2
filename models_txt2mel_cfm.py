@@ -1365,7 +1365,16 @@ def load_ASR_models(ASR_MODEL_PATH, ASR_MODEL_CONFIG):
 
 def build_model(args, args_cfm, text_aligner, pitch_extractor, bert):
     # choose different decoder version
-    if "pe_mu_type" in args and args.pe_mu_type == "down_pe_up_mel":
+    # Pop use_v3 before forwarding args_cfm to any constructor
+    use_v3 = args_cfm.pop("use_v3", False)
+    use_v4 = args_cfm.pop("use_v4", False)
+    if use_v3:
+        from Modules.cfm.flow_matching_v3 import CFMDecoderV3
+        decoder = CFMDecoderV3(**args_cfm)
+    elif use_v4:
+        from Modules.cfm.flow_matching_v4 import CFMDecoderV4
+        decoder = CFMDecoderV4(**args_cfm)  # no gin_channels in args_cfm
+    elif "pe_mu_type" in args and args.pe_mu_type == "down_pe_up_mel":
         from Modules.cfm.flow_matching_down_pe import CFMDecoder
         decoder = CFMDecoder(**args_cfm)
     elif  "pe_mu_type" in args and args.pe_mu_type == "up_mu_v2":
@@ -1449,6 +1458,79 @@ def build_model(args, args_cfm, text_aligner, pitch_extractor, bert):
         text_aligner=text_aligner,
         pitch_extractor=pitch_extractor,
 
+        discriminator=discriminator
+    )
+    return nets
+
+
+def build_model_v4(args, args_cfm, text_aligner, pitch_extractor, bert):
+    """Build model for CFMDecoderV4 (ICL) with style_dim diffusion (not style_dim * 2).
+
+    Differences from build_model:
+      - Only supports CFMDecoderV4 (use_v4 is always assumed).
+      - Diffusion channels/context_features = style_dim (not style_dim * 2),
+        matching s_trg = s_dur (prosodic style only, 128-dim).
+    """
+    args_cfm.pop("use_v3", None)
+    args_cfm.pop("use_v4", None)
+    from Modules.cfm.flow_matching_v4 import CFMDecoderV4
+    decoder = CFMDecoderV4(**args_cfm)
+
+    text_encoder = TextEncoder(channels=args.hidden_dim, kernel_size=5, depth=args.n_layer, n_symbols=args.n_token)
+
+    if args.cond_prosody_type == "bertfusion":
+        predictor = ProsodyPredictorByTrend_v4(style_dim=args.style_dim, d_hid=args.hidden_dim, nlayers=args.n_layer,
+                                               trd_dim=args.trd_dim, max_dur=args.max_dur, dropout=args.dropout,
+                                               n_bins=args.n_bins, trd_min=args.trd_min, trd_max=args.trd_max)
+    else:
+        predictor = ProsodyPredictor(style_dim=args.style_dim, d_hid=args.hidden_dim, nlayers=args.n_layer,
+                                     max_dur=args.max_dur, dropout=args.dropout)
+
+    style_encoder = StyleEncoder(dim_in=args.dim_in, style_dim=args.style_dim,
+                                 max_conv_dim=args.hidden_dim, repeat_num=args.repeat_num)
+    predictor_encoder = StyleEncoder(dim_in=args.dim_in, style_dim=args.style_dim,
+                                     max_conv_dim=args.hidden_dim)
+
+    # Diffusion target = s_dur only (style_dim, not style_dim * 2)
+    if args.multispeaker:
+        transformer = StyleTransformer1d(channels=args.style_dim,
+                                         context_embedding_features=bert.config.hidden_size,
+                                         context_features=args.style_dim,
+                                         **args.diffusion.transformer)
+    else:
+        transformer = Transformer1d(channels=args.style_dim,
+                                    context_embedding_features=bert.config.hidden_size,
+                                    **args.diffusion.transformer)
+    diffusion = AudioDiffusionConditional(
+        in_channels=1,
+        embedding_max_length=bert.config.max_position_embeddings,
+        embedding_features=bert.config.hidden_size,
+        embedding_mask_proba=args.diffusion.embedding_mask_proba,
+        channels=args.style_dim,
+        context_features=args.style_dim,
+    )
+    diffusion.diffusion = KDiffusion(
+        net=diffusion.unet,
+        sigma_distribution=LogNormalDistribution(mean=args.diffusion.dist.mean, std=args.diffusion.dist.std),
+        sigma_data=args.diffusion.dist.sigma_data,
+        dynamic_threshold=0.0
+    )
+    diffusion.diffusion.net = transformer
+    diffusion.unet = transformer
+
+    discriminator = Discriminator2d(dim_in=args.dim_in, num_domains=1, max_conv_dim=args.hidden_dim)
+
+    nets = Munch(
+        bert=bert,
+        bert_encoder=nn.Linear(bert.config.hidden_size, args.hidden_dim),
+        predictor=predictor,
+        decoder=decoder,
+        text_encoder=text_encoder,
+        predictor_encoder=predictor_encoder,
+        style_encoder=style_encoder,
+        diffusion=diffusion,
+        text_aligner=text_aligner,
+        pitch_extractor=pitch_extractor,
         discriminator=discriminator
     )
     return nets

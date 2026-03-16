@@ -72,7 +72,8 @@ class MultiHeadAttentionCross(nn.Module):
             dropout_p = 0
             attn_mask_operation = "multiply"  # to add conditioning attn_mask
 
-        output, attn_map = scaled_dot_product_attention(query, key, value, attn_mask=mask, dropout_p=dropout_p, attn_mask_operation=attn_mask_operation)  # attn: [b, n_h, t_t, t_s]
+        output, attn_map = scaled_dot_product_attention(query, key, value, attn_mask=mask, dropout_p=dropout_p,
+                                                        attn_mask_operation=attn_mask_operation)  # attn: [b, n_h, t_t, t_s]
         output = output.transpose(2, 3).contiguous().view(b, d, t_t)  # [b, n_h, t_t, d_k] -> [b, d, t_t]
         return output, attn_map
 

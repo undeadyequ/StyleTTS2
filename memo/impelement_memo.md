@@ -1,213 +1,103 @@
+## Basic logic of ICL version
+### 1. Train
+   1. mel * (1 - rand_span_mask) -> cond
+   2. torch.cat((x, cond, text_embed), dim=1) -> x
+   3. loss * rand_span_mask -> masked_loss
 
-12/27
-1. create r_sharp_up.txt (10), r_sharp_turn.txt (10), s.txt (10)
-2. synthesized by styleTTS2, and monoDiT on (a,b=0,0 or 0.3, 0.7)
-3. compute ctw and RMSE, draw (only pitch)
-
-
-
-10/27
-1. F0, Energy prediction values
-   - F0_model = JDCNet(num_class=1, seq_len=192)
-2. PE conditioning
-   - Text + S(styleDiff)
-   - Reference PE directly
-3. Inference code
-   - Text, Ref, 
-4. Other
-   - mask problem
-
-10/28
-1. Test ref_pe and pred_pe conditioning, expect that pred_pe is good to show monotonic?
-   - if Not: considering adat_pe
-2. Test stylediff and styleEnc conditioning, to decide which one to use.
-3. Add synthesize speech code in main
-
-mdit_cfm_v2_stylediff_pred_pe_epoch28_completeStyleDiff: 2.4 + 0.6
+### 2. Inference
+   1. concate(txt_frm_ref, txt_frm_tgt) -> txt_frm_full    
+      1. style_encoder(txt_ref) -> ref_emb * ref_s2s -> txt_frm_ref
+      2. style_encoder(txt_tgt) -> tgt_emb * tgt_dur -> txt_frm_tgt
+   2. concate(mel_ref, mel_mask_tgt) -> mel_full
+   4. concate(pe_ref, pe_ref) -> pe_full
+   5. estimator(cond=mel_full, mu=txt_frm_full, seq_style=pe_full)  [B, C, T], [B, D, T/2], [B, 2, T]
+      1. noise(mel_full) -> noise_full  # len(mel_ref), len(txt_frm_tgt) -> noise_ref/tgt
 
 
+### 3. Inference (during training)
+   1. split tgt_emb * tgt_s2s to 30% for ref and 70% for tgt, or 30% for ref and 100% for tgt (after epoch15)
 
+## Process details of ICL version
+### 1. InferenceAPI_bertFusion_icl.py
+    [ICL sliced mel/text]
+    - Tokenise (text, ref_text): ps, ps_ref
+    - Clip reference mel (ref): **ref_mel_sliced**
+    - Force-align (ref_text, ref_mel): s2s_attn_mono_ref
+    - Frame-level reference text encoding&Clip (s2s_attn_mono_ref): **en_ref**  # may mismatch with ref_mel_sliced due to the FA error
+    [Frame-level Embedding]
+    - Semantic/Acoustic text encode:  t_en, d_en ->(s) d
+    - Prosody prediction style (ref): s
+    - Duration prediction (d_en): pred_aln_trg
+    - Tgt frame embedding (t_en, pred_aln_trg): **mu_tgt**
+    [PE prediction]
+    - Voiced mask (ps, ps_ref)  ->  uv, uv_ref
+    - PE extract (ref, ref_slice): pe_extractor(ref_mel) -> F0_ref, pe_extractor(ref_mel_sliced) -> pe_ref
+    - Semantic-Prosodic style ([d * pred_aln_trg], [F0_ref, s2s_ref, uv_ref, uv, pred_aln_trg]): sem_pros_style
+    - PE prediction (sem_pros_style, s): **pe_tgt**
+    - decoder(mu_tgt=mu_tgt, cond_ref=ref_mel_sliced, mu_ref=en_ref, seq_style_tgt=pe_tgt, seq_style_ref=pe_ref)
+2. Others in InferenceAPI_bertFusion_icl.py
+   - No txt_frm Shift
 
-stable_voiced tensor([0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00,
-        0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00,
-        0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00,
-        0.0000e+00, 0.0000e+00, 3.7577e-03, 3.3747e-02, 1.4890e-01, 3.1958e-01,
-        5.6109e-01, 8.2941e-01, 9.1352e-01, 9.8858e-01, 9.6762e-01, 9.5226e-01,
-        9.5218e-01, 8.9536e-01, 8.1753e-01, 5.8396e-01, 3.6060e-01, 1.4307e-01,
-        5.1139e-02, 5.0843e-02, 1.4979e-01, 3.6071e-01, 6.2562e-01, 7.8292e-01,
-        7.7512e-01, 6.2564e-01, 3.6245e-01, 1.9168e-01, 1.8692e-01, 3.7057e-01,
-        5.7363e-01, 7.3064e-01, 8.4139e-01, 8.3994e-01, 7.3082e-01, 5.8935e-01,
-        3.3187e-01, 1.5132e-01, 4.1262e-02, 6.7282e-03, 0.0000e+00, 0.0000e+00,
-        0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00,
-        0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 7.1221e-03, 3.8873e-02,
-        1.4696e-01, 3.4155e-01, 6.1451e-01, 7.7753e-01, 8.7218e-01, 8.6336e-01,
-        8.6524e-01, 9.7494e-01, 9.7019e-01, 9.0400e-01, 9.7806e-01, 9.9399e-01,
-        9.5598e-01, 8.9919e-01, 8.3423e-01, 5.6045e-01, 2.1663e-01, 8.6215e-03,
-        6.6157e-10, 1.5429e-07, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00,
-        0.0000e+00, 0.0000e+00, 6.8021e-03, 4.2388e-02, 1.5153e-01, 3.5590e-01,
-        5.9989e-01, 7.7428e-01, 7.6068e-01, 5.8212e-01, 3.1155e-01, 1.1674e-01,
-        3.3836e-02, 7.1401e-03, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00,
-        0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 5.8446e-03, 3.0389e-02,
-        1.1312e-01, 2.8579e-01, 5.1664e-01, 7.4958e-01, 9.3277e-01, 8.4527e-01,
-        7.3404e-01, 6.0104e-01, 3.5789e-01, 1.5054e-01, 4.2517e-02, 6.7057e-03,
-        0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00,
-        0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 6.1156e-03, 3.3851e-02,
-        1.2247e-01, 3.0300e-01, 5.5540e-01, 8.1191e-01, 9.4744e-01, 9.0359e-01,
-        8.3289e-01, 3.4847e-01, 2.8221e-03, 3.7301e-10, 9.3908e-07, 2.4612e-06,
-        0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00,
-        0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00,
-        0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00,
-        6.3103e-03, 3.6514e-02, 1.4059e-01, 3.3823e-01, 6.0131e-01, 8.1127e-01,
-        9.4028e-01, 9.5957e-01, 9.7279e-01, 9.7946e-01, 9.4493e-01, 9.4971e-01,
-        9.4517e-01, 9.3385e-01, 8.1079e-01, 5.9225e-01, 3.2923e-01, 1.5090e-01,
-        4.2122e-02, 7.5383e-03, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00,
-        0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00,
-        7.6066e-03, 4.3507e-02, 1.5304e-01, 3.5319e-01, 6.1400e-01, 7.6752e-01,
-        8.4004e-01, 8.3087e-01, 8.0951e-01, 8.1467e-01, 8.1437e-01, 8.1801e-01,
-        8.4365e-01, 8.4595e-01, 8.9580e-01, 8.9150e-01, 9.5435e-01, 9.3452e-01,
-        9.9795e-01, 9.7415e-01, 9.5639e-01, 9.6630e-01, 9.3830e-01, 9.4387e-01,
-        9.2780e-01, 9.8402e-01, 9.5894e-01, 9.9618e-01, 9.9566e-01, 9.9665e-01,
-        9.6276e-01, 9.7715e-01, 9.9177e-01, 8.4858e-01, 5.4173e-01, 8.8179e-03,
-        2.0706e-09, 9.5161e-06, 1.7944e-02, 2.7582e-02, 2.0085e-01, 1.8101e-01,
-        1.3076e-29, 1.5328e-01, 2.2908e-25, 3.9926e-26, 0.0000e+00, 0.0000e+00,
-        0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00,
-        0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00], device='cuda:0')
-ref_pitch_i tensor([-0.1365, -0.0628,  0.0423,  0.3264,  0.5654,  0.6980,  0.7873,  0.8231,
-         0.8517,  0.8754,  0.9010,  0.9274,  0.9435,  0.9577,  0.9565,  0.9516,
-         0.9314,  0.9101,  0.8866,  0.8718,  0.8662,  0.8688,  0.8760,  0.8810,
-         0.8854,  0.8874,  0.8897,  0.8965,  0.9034,  0.9106,  0.9141,  0.9114,
-         0.8996,  0.8798,  0.8593,  0.8384,  0.8462,  0.8598,  0.8997,  0.9381,
-         0.9617,  0.9771,  0.9711,  0.9564,  0.9299,  0.8996,  0.8665,  0.8433,
-         0.8238,  0.8188,  0.8160,  0.8155,  0.8141,  0.8084,  0.8047,  0.8055,
-         0.8146,  0.8332,  0.8506,  0.8671,  0.8332,  0.7838,  0.6144,  0.4300,
-         0.1894,  0.0000,  0.0000,  0.0834,  0.3139,  0.5403,  0.7629,  0.8931,
-         0.9756,  0.9952,  0.9998,  0.9905,  0.9805,  0.9689,  0.9572,  0.9449,
-         0.9335,  0.9233,  0.9148,  0.9078,  0.8996,  0.8910,  0.8741,  0.8558,
-         0.8265,  0.7967,  0.7641,  0.7327,  0.7040,  0.6784,  0.6566,  0.6406,
-         0.6285,  0.6252,  0.6250,  0.6341,  0.6444,  0.6573,  0.6684,  0.6716,
-         0.6694,  0.6569,  0.6409,  0.6214,  0.6048,  0.5899,  0.5831,  0.5784,
-         0.5809,  0.5847,  0.5968,  0.6144,  0.6503,  0.6968,  0.7600,  0.8209,
-         0.8795,  0.9097,  0.9265,  0.9181,  0.9045,  0.9041,  0.9063,  0.9239,
-         0.9375,  0.9409,  0.9364,  0.9214,  0.9048,  0.8871,  0.8713,  0.8562,
-         0.8428,  0.8295,  0.8178,  0.8062,  0.7956,  0.7850,  0.7747,  0.7644,
-         0.7541,  0.7449,  0.7364,  0.7299,  0.7240,  0.7192,  0.7147,  0.7131,
-         0.7129,  0.7180,  0.7242,  0.7322,  0.7384,  0.7429,  0.7457,  0.7476,
-         0.7478,  0.7476,  0.7204,  0.6820,  0.5589,  0.4028,  0.1504, -0.1141,
-        -0.3963, -0.6213, -0.8000, -0.8974, -0.9604, -0.9803, -0.9927, -0.9933,
-        -0.9935, -0.9917, -0.9899, -0.9882, -0.9866, -0.9851, -0.9773, -0.9651,
-        -0.9110, -0.8425, -0.6623, -0.4661, -0.2084,  0.0492,  0.3062,  0.5097,
-         0.6094,  0.6613,  0.6631,  0.6371,  0.5954,  0.5476,  0.4980,  0.4538,
-         0.4110,  0.3782,  0.3482,  0.3271,  0.3094,  0.2972,  0.2873,  0.2796,
-         0.2733,  0.2677,  0.2646,  0.2621,  0.2640,  0.2667,  0.2729,  0.2795,
-         0.2869,  0.2932,  0.2979,  0.3003,  0.3011,  0.2988,  0.2952,  0.2808,
-         0.2642,  0.2165,  0.1607,  0.0651, -0.0424, -0.1753, -0.3238, -0.4898,
-        -0.6408, -0.7823, -0.8716, -0.9449, -0.9710, -0.9915, -0.9951, -0.9981,
-        -0.9986, -0.9991, -0.9993, -0.9996, -0.9997, -0.9999, -0.9999, -1.0000,
-        -1.0000, -1.0000, -0.9999, -0.9999, -0.9997, -0.9996, -0.9995, -0.9993,
-        -0.9990, -0.9987, -0.9985, -0.9984, -0.9984, -0.9984], device='cuda:0')
-pred_pitch tensor([-1.5010e-01, -1.1259e+00, -5.9173e-01, -5.9079e-01, -8.1930e-01,
-        -6.3080e-01, -7.0805e-01, -6.8974e-01, -5.3829e-01, -5.4555e-01,
-        -3.8314e-01, -3.2783e-01, -4.9286e-03,  1.6358e-01,  2.2951e-01,
-         5.5182e-01,  1.7592e+00,  1.6091e+01,  1.3588e+02,  1.8257e+02,
-         2.0297e+02,  2.1099e+02,  2.1007e+02,  2.0578e+02,  2.0208e+02,
-         2.0146e+02,  2.0284e+02,  2.0296e+02,  2.0397e+02,  2.0247e+02,
-         2.0122e+02,  1.9924e+02,  1.9820e+02,  1.9580e+02,  1.9531e+02,
-         1.9330e+02,  1.9321e+02,  1.9294e+02,  1.9361e+02,  1.9409e+02,
-         1.9409e+02,  1.9336e+02,  1.9233e+02,  1.9233e+02,  1.9327e+02,
-         1.9406e+02,  1.9559e+02,  1.9529e+02,  1.9241e+02,  1.8820e+02,
-         1.8485e+02,  1.8825e+02,  1.9246e+02,  1.9454e+02,  1.9748e+02,
-         1.9710e+02,  1.9880e+02,  1.9514e+02,  1.8533e+02,  1.3312e+02,
-         2.8750e+01,  1.3662e+01,  5.6216e+01,  1.5266e+02,  1.8988e+02,
-         1.9658e+02,  1.9580e+02,  1.9216e+02,  1.9060e+02,  1.8731e+02,
-         1.8544e+02,  1.8222e+02,  1.8107e+02,  1.7915e+02,  1.7835e+02,
-         1.7608e+02,  1.7366e+02,  1.7007e+02,  1.6642e+02,  1.6579e+02,
-         1.6654e+02,  1.6908e+02,  1.6852e+02,  1.6837e+02,  1.6932e+02,
-         1.6776e+02,  1.6813e+02,  1.6508e+02,  1.5255e+02,  9.9064e+01,
-         6.6519e+00,  1.3151e+00,  1.9842e+00,  6.6277e+00,  1.0561e+02,
-         1.9222e+02,  2.2007e+02,  2.3212e+02,  2.3608e+02,  2.3501e+02,
-         2.3542e+02,  2.3436e+02,  2.3289e+02,  2.3162e+02,  2.2974e+02,
-         2.2727e+02,  2.2178e+02,  2.1291e+02,  2.0490e+02,  2.0293e+02,
-         2.0857e+02,  2.1238e+02,  2.1829e+02,  2.1739e+02,  2.1607e+02,
-         2.1275e+02,  2.1006e+02,  2.0848e+02,  2.0037e+02,  1.8975e+02,
-         1.8130e+02,  1.7464e+02,  1.6939e+02,  1.6632e+02,  1.6674e+02,
-         1.6966e+02,  1.7333e+02,  1.7469e+02,  1.7533e+02,  1.7581e+02,
-         1.7653e+02,  1.7992e+02,  1.8992e+02,  2.0842e+02,  2.2580e+02,
-         2.2948e+02,  2.2200e+02,  2.1308e+02,  2.0576e+02,  2.0014e+02,
-         1.9562e+02,  1.8873e+02,  1.8263e+02,  1.7577e+02,  1.6995e+02,
-         1.6516e+02,  1.6194e+02,  1.6092e+02,  1.6089e+02,  1.6207e+02,
-         1.6167e+02,  1.4781e+02,  7.1227e+01,  3.6356e+00,  7.2515e-01,
-         2.1720e-01,  5.2836e-01,  3.9541e-01,  8.2951e-02,  1.3799e-01,
-        -1.5886e-01, -2.8193e-01, -2.9216e-01, -4.3961e-01, -8.1642e-02,
-         2.6361e-01,  3.4006e-01,  1.2572e+00,  5.0260e+00,  9.9279e+01,
-         1.7194e+02,  1.9246e+02,  1.9378e+02,  1.8789e+02,  1.8267e+02,
-         1.7782e+02,  1.7553e+02,  1.7341e+02,  1.7207e+02,  1.7097e+02,
-         1.7054e+02,  1.6968e+02,  1.6898e+02,  1.6845e+02,  1.6703e+02,
-         1.6574e+02,  1.6453e+02,  1.6395e+02,  1.6502e+02,  1.6668e+02,
-         1.6940e+02,  1.6980e+02,  1.7073e+02,  1.7047e+02,  1.7137e+02,
-         1.7502e+02,  1.8280e+02,  1.9529e+02,  2.0186e+02,  2.0383e+02,
-         2.0310e+02,  2.0181e+02,  2.0123e+02,  2.0152e+02,  2.0155e+02,
-         2.0168e+02,  2.0163e+02,  2.0050e+02,  1.9957e+02,  1.9665e+02,
-         1.9287e+02,  1.8780e+02,  1.8194e+02,  1.7643e+02,  1.7108e+02,
-         1.6600e+02,  1.6182e+02,  1.5781e+02,  1.5522e+02,  1.5257e+02,
-         1.5151e+02,  1.4998e+02,  1.4993e+02,  1.4934e+02,  1.5034e+02,
-         1.5112e+02,  1.5257e+02,  1.5390e+02,  1.5218e+02,  1.5255e+02,
-         1.5351e+02,  1.5342e+02,  1.5352e+02,  1.5344e+02,  1.5432e+02,
-         1.5379e+02,  1.5359e+02,  1.4986e+02,  1.3669e+02,  6.7228e+01,
-         3.3494e+00,  5.9120e-01,  3.2383e-01,  1.9025e-01,  1.5332e-01,
-         1.8500e-01, -2.1261e-01, -2.5282e-01,  3.1050e-02, -2.6716e-02,
-        -6.8730e-02, -1.9179e-01, -9.2672e-02, -2.7991e-01, -4.1472e-01,
-        -5.5102e-01, -4.7163e-01, -4.1244e-01, -8.3117e-01, -6.8461e-01,
-        -1.0827e+00, -6.5667e-01], device='cuda:0')
-tensor([-1.5010e-01, -1.1259e+00, -5.9173e-01, -5.9079e-01, -8.1930e-01,
-        -6.3080e-01, -7.0805e-01, -6.8974e-01, -5.3829e-01, -5.4555e-01,
-        -3.8314e-01, -3.2783e-01, -4.9286e-03,  1.6358e-01,  2.2951e-01,
-         5.5182e-01,  1.7592e+00,  1.6091e+01,  1.3588e+02,  1.8257e+02,
-         2.0298e+02,  2.1102e+02,  2.1020e+02,  2.0606e+02,  2.0258e+02,
-         2.0219e+02,  2.0366e+02,  2.0385e+02,  2.0484e+02,  2.0334e+02,
-         2.0209e+02,  2.0006e+02,  1.9893e+02,  1.9632e+02,  1.9562e+02,
-         1.9342e+02,  1.9325e+02,  1.9299e+02,  1.9375e+02,  1.9443e+02,
-         1.9469e+02,  1.9412e+02,  1.9309e+02,  1.9293e+02,  1.9360e+02,
-         1.9423e+02,  1.9575e+02,  1.9560e+02,  1.9289e+02,  1.8880e+02,
-         1.8553e+02,  1.8894e+02,  1.9305e+02,  1.9502e+02,  1.9775e+02,
-         1.9722e+02,  1.9883e+02,  1.9515e+02,  1.8533e+02,  1.3312e+02,
-         2.8750e+01,  1.3662e+01,  5.6216e+01,  1.5266e+02,  1.8988e+02,
-         1.9658e+02,  1.9580e+02,  1.9216e+02,  1.9060e+02,  1.8731e+02,
-         1.8545e+02,  1.8225e+02,  1.8122e+02,  1.7949e+02,  1.7896e+02,
-         1.7685e+02,  1.7452e+02,  1.7091e+02,  1.6725e+02,  1.6671e+02,
-         1.6745e+02,  1.6992e+02,  1.6942e+02,  1.6927e+02,  1.7018e+02,
-         1.6856e+02,  1.6886e+02,  1.6556e+02,  1.5272e+02,  9.9071e+01,
-         6.6519e+00,  1.3151e+00,  1.9842e+00,  6.6277e+00,  1.0561e+02,
-         1.9222e+02,  2.2007e+02,  2.3212e+02,  2.3609e+02,  2.3504e+02,
-         2.3552e+02,  2.3460e+02,  2.3329e+02,  2.3214e+02,  2.3025e+02,
-         2.2765e+02,  2.2198e+02,  2.1298e+02,  2.0492e+02,  2.0293e+02,
-         2.0857e+02,  2.1238e+02,  2.1829e+02,  2.1739e+02,  2.1607e+02,
-         2.1275e+02,  2.1006e+02,  2.0848e+02,  2.0037e+02,  1.8977e+02,
-         1.8140e+02,  1.7490e+02,  1.6987e+02,  1.6701e+02,  1.6759e+02,
-         1.7042e+02,  1.7399e+02,  1.7525e+02,  1.7567e+02,  1.7595e+02,
-         1.7657e+02,  1.7993e+02,  1.8992e+02,  2.0842e+02,  2.2580e+02,
-         2.2948e+02,  2.2200e+02,  2.1308e+02,  2.0576e+02,  2.0014e+02,
-         1.9562e+02,  1.8873e+02,  1.8263e+02,  1.7580e+02,  1.7004e+02,
-         1.6538e+02,  1.6235e+02,  1.6151e+02,  1.6157e+02,  1.6272e+02,
-         1.6226e+02,  1.4806e+02,  7.1229e+01,  3.6356e+00,  7.2515e-01,
-         2.1720e-01,  5.2836e-01,  3.9541e-01,  8.2951e-02,  1.3799e-01,
-        -1.5886e-01, -2.8193e-01, -2.9216e-01, -4.3961e-01, -8.1642e-02,
-         2.6361e-01,  3.4006e-01,  1.2572e+00,  5.0260e+00,  9.9279e+01,
-         1.7194e+02,  1.9246e+02,  1.9378e+02,  1.8789e+02,  1.8266e+02,
-         1.7778e+02,  1.7539e+02,  1.7308e+02,  1.7147e+02,  1.7017e+02,
-         1.6961e+02,  1.6873e+02,  1.6803e+02,  1.6751e+02,  1.6617e+02,
-         1.6494e+02,  1.6391e+02,  1.6351e+02,  1.6485e+02,  1.6671e+02,
-         1.6950e+02,  1.6987e+02,  1.7076e+02,  1.7048e+02,  1.7137e+02,
-         1.7502e+02,  1.8280e+02,  1.9529e+02,  2.0186e+02,  2.0383e+02,
-         2.0310e+02,  2.0181e+02,  2.0123e+02,  2.0152e+02,  2.0156e+02,
-         2.0169e+02,  2.0168e+02,  2.0060e+02,  1.9974e+02,  1.9686e+02,
-         1.9309e+02,  1.8801e+02,  1.8215e+02,  1.7664e+02,  1.7130e+02,
-         1.6623e+02,  1.6206e+02,  1.5806e+02,  1.5549e+02,  1.5284e+02,
-         1.5180e+02,  1.5026e+02,  1.5022e+02,  1.4962e+02,  1.5060e+02,
-         1.5133e+02,  1.5272e+02,  1.5396e+02,  1.5214e+02,  1.5237e+02,
-         1.5320e+02,  1.5293e+02,  1.5288e+02,  1.5266e+02,  1.5348e+02,
-         1.5286e+02,  1.5263e+02,  1.4902e+02,  1.3615e+02,  6.7219e+01,
-         3.3494e+00,  5.9119e-01,  3.0590e-01,  1.6268e-01, -4.7481e-02,
-         4.0172e-03, -2.1261e-01, -4.0609e-01,  3.1050e-02, -2.6716e-02,
-        -6.8730e-02, -1.9179e-01, -9.2672e-02, -2.7991e-01, -4.1472e-01,
-        -5.5102e-01, -4.7163e-01, -4.1244e-01, -8.3117e-01, -6.8461e-01,
-        -1.0827e+00, -6.5667e-01], device='cuda:0')
+## Prompt to create icl (in-context learning) version one by one
+1. General context (DeCoDiT-TTS and F5-TTS)
+
+There are two Dit-based Flow matching TTS models. 
+One is the proposed DeCoDiT-TTS, which is mainly implemented in @flow_mathcing_v3.py, based on the cross_DiT. The input/output of compute_loss function are
+INPUT: melspectrogram (x1), frame-level text embedding (mu) and pitch_energy_contours (seq_style), and global style (c)
+OUTPUT: loss of velocity field of whole melspectrogram
+Process:
+- concatenate(noised(x1), mu) -> x; 
+- CrossDiT(x, seq_style, c, t) -> v; 
+- v - u -> loss
+
+The another is the F5-TTS, whic his mainly implemented in cfg.py in http. The input/output of forward function are:
+- INPUT: melspectrogram (inp), text
+- OUTPUT: loss of velocity field of whole melspectrogram
+- Process:
+  - concatenate(x, cond, text_embed) -> x; conv_pos_embed(x) + x -> x, where x is noised(inp). cond is masked inp 
+  - DiT(x, t) -> v; 
+  - mask(v - u) -> loss
+
+2. flow_matching_v4.py (compute_loss)
+
+I want to introduce the masked mel-spectrogram mechanism of F5-TTS to DeCoDiT-TTS, so the new input/output of compute_loss function will be
+- INPUT: melspectrogram (x1), frame-level text embedding (mu) and pitch_energy_contours (seq_style) -> c is not needed anymore
+- OUTPUT: loss of velocity field of whole melspectrogram
+- Process: 
+  - concatenate(noised(x1), cond, mu) -> x; conv_pos_embed(x) + x -> x (I don't know if it is needed?)
+  - CrossDiT(x, seq_style, t) -> v;
+  - mask(v - u) -> loss
+Write flow_matching_v4.py and the corresponding script, such as estimator_v4.py to implement this.
+
+3. flow_matching_v4.py (inference)
+
+Let's consider the input/output in inference (forward function) in @ carefully. The current INPUT/OUTPUT and process are
+- INPUT: frame-level target text embedding (mu), frame-level target pitch/energy contours (seq_style), reference mel frames (cond)
+- OUTPUT: output_mel, attn_maps
+- Process: 
+  - concatenate(noise, cond, mu) -> x
+  - CrossDiT(x, seq_style, t) -> v
+  - ODE(v) -> output_mel
+
+The problems are
+- INPUT: mu_tgt, seq_style_tgt, cond_ref -> mu_tgt, mu_ref, seq_style_tgt, seq_style_ref, cond_ref (Comment: not only target mu, seq_style, but also reference) 
+- Process
+  - it should be concatenate(noise_ref_tgt, cond_ref_tgt, mu_ref_tgt) -> x, where noise_ref_tgt are concatenation of noise_ref and noise_tgt on temporal dim, same as cond, and mu. (cond_tgt is just mask) 
+  - check the cfm.py and dit.py for details.
+
+4. train_first_txt2mel_icl.py 
+  Now, let's write a new train_first_txt2mel_cfm_icl.py, based on @train_first_txt2mel_cfm.py by modifying 
+  - training by flow_matching_v4.py, chosen by a new config_libritts_txt2mel_cfm_v35.yml 
+  - during inference, the utterance is split into first half (target) and second half (reference) by mel frame count. 
+  If you have question, just ask
+
+5. train_second_txt2mel_cfm_bertfusion_icl.py
+
+6. inferenceAPI_bertFusion
+Let's create a new inferenceAPI_bertFusion_icl.py, based on @inferenceAPI_bertFusion.py. Require
+- the logic is similar as the inference logic in @train_second...py
+- the mu_ref is the frame-extended ref_txt encoding given phoneme2frame duration which is provided by the force alignment between ref_mel and ref_text, refering to the "s2s_attn_mono" in train_second
+- Slice ref_mel to a pre-defined length (if it is longer than that), and use give the sliced ref_mel to decoder
+- Slice ref_txt adaptively to the sliced ref_mel by using the phoneme2frame duration
+
+If you have question, just ask

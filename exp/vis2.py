@@ -374,12 +374,12 @@ def plot_simple_mel(audio_path, out_path):
 
 
 def plot_f0_comparison(contours, labels, title=None, out_path="pitch_compare.pdf",
-                       target_len=None, figsize=(7, 2.5), show_grid=False,
+                       target_len=None, figsize=(14, 5), show_grid=False,
                        xlabel="Frame", ylabel=r"$F_0$ (normalized)",
-                       ylim=None, legend_loc='upper left', legend_outside=False,
-                       legend_ncol=1):
+                       ylim=None, legend_ncol=1):
     """
     Visualize multiple F0/energy contours (academic style).
+    Legend is placed on the right side, stacked vertically.
 
     Args:
         contours: List of 1-D contours (tensor, numpy, or list). Supports any number.
@@ -390,28 +390,26 @@ def plot_f0_comparison(contours, labels, title=None, out_path="pitch_compare.pdf
         figsize: Figure size in inches (width, height)
         show_grid: Whether to show grid lines
         xlabel, ylabel: Axis labels
-        ylim: Y-axis limits as (ymin, ymax). None for auto with 20% top margin for legend.
-        legend_loc: Legend location ('upper left', 'upper right', 'lower left', etc.)
-        legend_outside: If True, place legend outside plot area (right side)
-        legend_ncol: Number of columns in legend (default: 1, use 2+ for compact horizontal layout)
+        ylim: Y-axis limits as (ymin, ymax). None for auto with 20% top margin.
+        legend_ncol: Number of columns in legend (default: 1)
     """
-    # Academic style settings
+    # Academic style settings (scaled up so fonts match ~10pt caption after ~50% shrink in two-column layout)
     with plt.rc_context({
         "font.family": "serif",
         "font.serif": ["Times New Roman", "STIXGeneral", "DejaVu Serif"],
         "mathtext.fontset": "stix",
-        "font.size": 11,
-        "axes.titlesize": 12,
-        "axes.labelsize": 11,
-        "axes.linewidth": 0.8,
-        "legend.fontsize": 10,
+        "font.size": 24,
+        "axes.titlesize": 22,
+        "axes.labelsize": 32,
+        "axes.linewidth": 1.2,
+        "legend.fontsize": 32,
         "legend.framealpha": 0.95,
-        "xtick.labelsize": 10,
-        "ytick.labelsize": 10,
+        "xtick.labelsize": 22,
+        "ytick.labelsize": 22,
         "xtick.direction": "in",
         "ytick.direction": "in",
-        "xtick.major.size": 4,
-        "ytick.major.size": 4,
+        "xtick.major.size": 5,
+        "ytick.major.size": 5,
     }):
         # Convert to numpy helper
         def to_numpy(x):
@@ -456,16 +454,16 @@ def plot_f0_comparison(contours, labels, title=None, out_path="pitch_compare.pdf
         for i, (contour, label) in enumerate(zip(contours, labels)):
             if i == n - 1:
                 # Primary (last): solid, thickest, full opacity, red
-                style = {'color': primary_color, 'linestyle': '-', 'linewidth': 1.8, 'alpha': 1.0}
+                style = {'color': primary_color, 'linestyle': '-', 'linewidth': 2.5, 'alpha': 1.0}
             elif i == n - 2:
                 # Secondary (second-to-last): dash-dot, thin, slightly transparent
-                style = {'color': base_colors[i % len(base_colors)], 'linestyle': '-.', 'linewidth': 1.2, 'alpha': 0.8}
+                style = {'color': base_colors[i % len(base_colors)], 'linestyle': '-.', 'linewidth': 1.8, 'alpha': 0.8}
             elif i == 0:
                 # First (reference): dashed
-                style = {'color': base_colors[i % len(base_colors)], 'linestyle': '--', 'linewidth': 1.2, 'alpha': 0.9}
+                style = {'color': base_colors[i % len(base_colors)], 'linestyle': '--', 'linewidth': 1.8, 'alpha': 0.9}
             else:
                 # Others: dotted
-                style = {'color': base_colors[i % len(base_colors)], 'linestyle': ':', 'linewidth': 1.5, 'alpha': 0.9}
+                style = {'color': base_colors[i % len(base_colors)], 'linestyle': ':', 'linewidth': 2.0, 'alpha': 0.9}
 
             ax.plot(contour, label=label, **style)
 
@@ -486,14 +484,12 @@ def plot_f0_comparison(contours, labels, title=None, out_path="pitch_compare.pdf
             margin = (ymax - ymin) * 0.25  # 25% margin for legend
             ax.set_ylim(ymin - margin * 0.1, ymax + margin)
 
-        # Legend
-        if legend_outside:
-            ax.legend(loc='center left', bbox_to_anchor=(1.02, 0.5),
-                      frameon=True, fancybox=False, edgecolor='gray', framealpha=0.95,
-                      ncol=legend_ncol)
-        else:
-            ax.legend(loc=legend_loc, frameon=True, fancybox=False,
-                      edgecolor='gray', framealpha=0.95, ncol=legend_ncol)
+        # Extend x-axis to make room for legend without overlapping contours
+        #ax.set_xlim(0, target_len * 1.35)
+
+        # Legend (inside figure, upper right; use ncol=2 for long labels)
+        ax.legend(loc='upper left', frameon=True, fancybox=False,
+                  edgecolor='gray', framealpha=0.95, ncol=legend_ncol)
 
         # Grid (optional)
         if show_grid:
@@ -501,7 +497,7 @@ def plot_f0_comparison(contours, labels, title=None, out_path="pitch_compare.pdf
 
         # Spine styling
         for spine in ax.spines.values():
-            spine.set_linewidth(0.8)
+            spine.set_linewidth(1.2)
 
         plt.tight_layout()
         plt.savefig(out_path, dpi=600, bbox_inches='tight',

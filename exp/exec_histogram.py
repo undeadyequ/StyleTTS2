@@ -50,19 +50,25 @@ def plot_mean_f0_hist_kde_apsipa(
     x_percentile_clip=(0.5, 99.5),   # robust xlim across all data
     savepath=None,
     prosody_type="pitch",
-    middleValue={}
+    middleValue={},
+    figsize=(24, 12),
+    display_names=None,      # dict mapping model key -> display name for legend
+    xlabel=None,             # custom x-axis label (default: "Mean F0 (Hz)")
 ):
     """
     APSIPA-style figure:
-      - 1x5 subplots (five emotions)
+      - 2x3 subplots (five emotions: 3 in row 1, 2 in row 2)
       - each subplot overlays 6 models: histogram + KDE of per-utterance mean F0
       - unvoiced frames (pitch==0) excluded before per-utterance mean
       - single shared legend below, clean axes, serif fonts
     """
     if len(emotions) != 5:
         raise ValueError(f"Need exactly 5 emotions for 5 sub-images, got {len(emotions)}.")
-    ##if len(models) != 6:
-    #   raise ValueError(f"Need exactly 6 models, got {len(models)}.")
+
+    # Default display names: use model key as-is if no mapping provided
+    if display_names is None:
+        display_names = {}
+    _dn = lambda m: display_names.get(m, m)
 
     if len(middleValue) != 0:
         mean_pitch_dict = middleValue.copy()
@@ -88,41 +94,46 @@ def plot_mean_f0_hist_kde_apsipa(
     xmax += pad
     xgrid = np.linspace(xmin, xmax, kde_grid_points)
 
-    # ---- APSIPA-ish styling (no manual colors; rely on default cycle) ----
+    # ---- APSIPA-ish styling (enlarged so fonts match caption after shrink) ----
     plt.rcParams.update({
         "font.family": "serif",
-        "font.size": 9,
-        "axes.titlesize": 10,
-        "axes.labelsize": 9,
-        "legend.fontsize": 8,
-        "xtick.labelsize": 8,
-        "ytick.labelsize": 8,
-        "axes.linewidth": 0.8,
+        "font.serif": ["Times New Roman", "STIXGeneral", "DejaVu Serif"],
+        "mathtext.fontset": "stix",
+        "font.size": 36,
+        "axes.titlesize": 36,
+        "axes.labelsize": 36,
+        "legend.fontsize": 36,
+        "xtick.labelsize": 36,
+        "ytick.labelsize": 36,
+        "axes.linewidth": 1.2,
         "xtick.direction": "in",
         "ytick.direction": "in",
-        "xtick.major.size": 3.0,
-        "ytick.major.size": 3.0,
-        "xtick.minor.size": 1.8,
-        "ytick.minor.size": 1.8,
+        "xtick.major.size": 5.0,
+        "ytick.major.size": 5.0,
+        "xtick.minor.size": 3.0,
+        "ytick.minor.size": 3.0,
         "figure.dpi": 300,
     })
 
     fig, axes = plt.subplots(
-        1, 5,
-        figsize=(17.2, 3.2),  # wide & short like journal figures
+        2, 3,
+        figsize=figsize,
         sharex=True,
         sharey=False,
         constrained_layout=False
     )
+    axes_flat = axes.flatten()
+    # Hide unused 6th subplot (row 1, col 2)
+    axes_flat[5].set_visible(False)
 
     # Keep handles for a single shared legend
     legend_handles = {}
     # Slightly different alphas/linewidths for academic readability
     hist_alpha = 0.18
-    kde_lw = 1.8
+    kde_lw = 2.5
 
     for i, emo in enumerate(emotions):
-        ax = axes[i]
+        ax = axes_flat[i]
         ax.set_title(emo)
 
         # clean spines (typical academic style)
@@ -143,7 +154,7 @@ def plot_mean_f0_hist_kde_apsipa(
                 density=density,
                 alpha=hist_alpha,
                 linewidth=0.0,
-                label=model,
+                label=_dn(model),
             )
             # KDE
             if USE_SCIPY_KDE and vals.size >= 2:
@@ -161,14 +172,14 @@ def plot_mean_f0_hist_kde_apsipa(
         ax.grid(True, alpha=0.25, linewidth=0.6)
         ax.set_xlim(xmin, xmax)
 
-        if i == 0:
+        if i % 3 == 0:
             ax.set_ylabel("Density" if density else "Count")
-        ax.set_xlabel(r"Mean $F_0$ (Hz)")
+        ax.set_xlabel(xlabel or r"Mean $F_0$ (Hz)")
         ax.minorticks_on()
 
     # Shared legend below (6 columns for 6 models)
     handles = [legend_handles[m] for m in models if legend_handles.get(m) is not None]
-    labels  = [m for m in models if legend_handles.get(m) is not None]
+    labels  = [_dn(m) for m in models if legend_handles.get(m) is not None]
 
     fig.legend(
         handles, labels,
@@ -186,6 +197,39 @@ def plot_mean_f0_hist_kde_apsipa(
     if savepath is not None:
         fig.savefig(savepath, bbox_inches="tight", pad_inches=0.02)
     return fig, axes
+
+
+def build_phoneme_std_dict(emo_model_std_dict, prosody_type="pitch_std"):
+    """Pool all per-phoneme stds across utterances into a flat list per (emo, model).
+
+    Input:
+      emo_model_std_dict[emo][model]["pitch_std"] = [[ph1, ph2, ...], [ph1, ...], ...]
+    Output:
+      pooled[emo][model] = [all phoneme stds pooled]
+    """
+    pooled = {}
+    for emo, model_dict in emo_model_std_dict.items():
+        pooled[emo] = {}
+        for model, data in model_dict.items():
+            all_stds = []
+            for utt_stds in data.get(prosody_type, []):
+                all_stds.extend([s for s in utt_stds if not np.isnan(s)])
+            pooled[emo][model] = all_stds
+    return pooled
+
+
+def plot_phoneme_std_hist_kde_apsipa(
+    emo_model_std_dict, emotions, models,
+    prosody_type="pitch_std", **kwargs,
+):
+    """Plot phoneme-level std histograms (reuses plot_mean_f0_hist_kde_apsipa)."""
+    middle = build_phoneme_std_dict(emo_model_std_dict, prosody_type)
+    if "pitch" in prosody_type:
+        xlabel = r"Phoneme pitch std (Hz)"
+    else:
+        xlabel = r"Phoneme energy std"
+    return plot_mean_f0_hist_kde_apsipa(
+        None, emotions, models, middleValue=middle, xlabel=xlabel, **kwargs)
 
 
 def extract_mean_f0_hist_kde_metadata(

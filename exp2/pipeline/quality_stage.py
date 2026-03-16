@@ -10,7 +10,7 @@ sys.path.append('/home/rosen/Project/StyleTTS2')
 
 from exp2.pipeline.base_pipeline import PipelineStage
 from exp.exp_wer import evaluate_wer
-from exec_utmosv2 import run_utmos
+from exp.exec_utmosv2 import run_utmos
 
 
 def _deep_merge(base: dict, update: dict) -> dict:
@@ -75,10 +75,18 @@ class QualityEvaluationStage(PipelineStage):
 
             # Per-model quality metrics
             quality = {
-                "wer": wer,
-                "substitutions": sub,
-                "deletions": dele,
-                "insertions": ins,
+                "wer": 0, #wer
+                "substitutions": 0, #sub
+                "deletions": 0, # dele
+                "insertions": 0, # ins
+                "utmos_mean": mean_mos,
+                "utmos_std": std_mos
+            }
+            quality = {
+                "wer": wer, #wer
+                "substitutions": sub, #sub
+                "deletions": dele, # dele
+                "insertions": ins, # ins
                 "utmos_mean": mean_mos,
                 "utmos_std": std_mos
             }

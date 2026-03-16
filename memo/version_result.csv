@@ -24,3 +24,34 @@ version,name,description,Intelligibility,Prosody,quality
 26,TemporalAdaIN,"same as 25, h_t only for beta",,,
 27,TemporalAdaIN,spectral_norm and max_norm for trend signal,,,
 28,concatenate,,,,
+29,BertFusion,,,,
+30,glb_t_concat_long,,,,
+31,glb_t_concat_no_longconnect,,,,
+32,dit_again,,,,
+33,,,,,
+34,"use_v3_glb_t_concat, correctted mca","use_v3, glb_t_concate, no_long_connection
+
+
+",,,
+35,"correct mca",""
+36,icl,"v3 vs v4 (train)
+1. in_proj input	noise_ch + hidden_ch	2×noise_ch + hidden_ch
+2. Block conditioning	c (global speaker)	t (timestep only)
+3. Forward args	(t, x, mask, mu, c, ...)	(t, x, cond, mask, mu, ...)
+
+v3 vs v4 (train)
+1. Signature	mu, cond, seq_style	mu_tgt, cond_ref, mu_ref, seq_style_tgt, seq_style_ref
+2. ODE initial z	randn_like(mu) * temperature (T_tgt only)	concat([cond_ref, noise_tgt], dim=-1) (T_full)
+3. cond	interpolated to T_tgt	concat([cond_ref, zeros_tgt], dim=-1) (T_full)
+4. mu	single asr_res(mu)	separate asr_res(mu_ref) + asr_res(mu_tgt), then concat
+5. seq_style	single pe_encode(seq_style)	separate pe_encode for ref/tgt, then concat
+Output	trajectory[-1] (full)	trajectory[-1][:, :, T_ref:] (tgt only)
+
+
+train_first_txt2mel_cfm_icl.py  before after
+1. st / style ref	sampled per batch item	removed
+2. s = style_encoder(...)	called every step	removed
+3. compute_loss call	(gt, mask, mu=en, c=s, seq_style=pe, p_mask=...)	(gt, mu=en, seq_style=pe)
+4. learn_monoAttn block	present	removed
+5. g_loss	λ_mel·cfm + λ_adv·cfm + λ_mono + λ_s2s + λ_monoAttn	λ_mel·cfm + λ_mono + λ_s2s
+6. optimizer.step	text_encoder + style_encoder + decoder	text_encoder + decoder"",,,""",,,

@@ -16,7 +16,7 @@ from Modules.prosodymodules.prosody_fusion import FactorizedGateMoEProsodyFusion
 class CFMDecoder(torch.nn.Module):
     def __init__(self, noise_channels, cond_channels, hidden_channels, out_channels, filter_channels, n_heads, n_layers,
                  kernel_size, p_dropout, gin_channels, cross_attn, residual_dim=64, dim_in=512, cfg_dropout=0,
-                 official_dit=False, prosody_fusion=False):  # different DiT version
+                 prosody_fusion=False, glb_t_concate=False, use_lsc=True):  # different DiT version
         super().__init__()
         self.noise_channels = noise_channels
         self.cond_channels = cond_channels
@@ -29,7 +29,7 @@ class CFMDecoder(torch.nn.Module):
         self.prosody_fusion = prosody_fusion
 
         self.estimator = Decoder(noise_channels, cond_channels, hidden_channels, out_channels, filter_channels, p_dropout, n_layers,
-                                 n_heads, kernel_size, gin_channels, cross_attn=cross_attn, official_dit=official_dit)  # cond: mu, gin: global_style
+                                 n_heads, kernel_size, gin_channels, cross_attn=cross_attn, glb_t_concate=glb_t_concate, use_lsc=use_lsc)  # cond: mu, gin: global_style
 
         # adpative to styleTTS input (pitch/energy)
 
@@ -150,7 +150,7 @@ class CFMDecoder(torch.nn.Module):
         uncond_output = self.estimator(t, x, mask, fake_content, fake_glb, fake_pe, p_mask, return_attn_map)
         #uncond_output = self.estimator(t, x, mask, fake_content, fake_speaker, None, None, return_attn_map)
 
-        if return_attn_map:  # Only return attn_map
+        if return_attn_map and cond_output[1] is not None:  # Only cache attn_map if cross-attn blocks exist
             self.t_count.append(t)
             if len(self.t_count) == 1 or len(self.t_count) == 100 or len(self.t_count) == 200:  # select t=1, 100, 200 in attention
                 self.attn_cache.append(cond_output[1].squeeze())

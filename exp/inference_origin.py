@@ -229,29 +229,29 @@ def syn_speech(synTexts, syn_styles, out_dir, model, sampler, model_params, alph
                 file1.write(text)
 
 if __name__ == '__main__':
-    style = "exp/data/r1_sharp_last.txt"  # r1, r1_test
-    txt = "exp/data/s1_10.txt"    # s1, s1_test
+    import argparse
+    parser = argparse.ArgumentParser(description="StyleTTS2 inference")
+    parser.add_argument("--style-file", required=True,  help="Reference style file (wav|txt format)")
+    parser.add_argument("--text-file",  required=True,  help="Synthesis text file (one sentence per line)")
+    parser.add_argument("--out-dir",    required=True,  help="Output directory for synthesized wav files")
+    parser.add_argument("--dataset",    default="esd",  choices=["esd", "libritts"], help="Dataset name for style parsing")
+    parser.add_argument("--ckpt",       default=f"{ckpt_root_dir}/styletts2_libriTTS/epochs_2nd_00020.pth", help="Model checkpoint path")
+    parser.add_argument("--config",     default=f"{ckpt_root_dir}/styletts2_libriTTS/config.yml",           help="Model config path")
+    parser.add_argument("--alpha",      type=float, default=0.0, help="Style mixing alpha (default: 0)")
+    parser.add_argument("--beta",       type=float, default=0.0, help="Style mixing beta (default: 0)")
+    args = parser.parse_args()
 
-    dataset = "esd"  # libritts
-    alpha = 0
-    beta = 0
+    model, sampler, model_params = get_styletts2_model(
+        ckpt=args.ckpt, config_f=args.config, model_name="styletts2")
+    syn_styles = get_synStyle_from_file(args.style_file, split_char='|', dataset_name=args.dataset)
+    synTexts = get_synText_from_file(args.text_file)
 
-    model, sampler, model_params = get_styletts2_model(ckpt=f"{ckpt_root_dir}/styletts2_libriTTS/epochs_2nd_00020.pth",
-                                                              config_f=f"{ckpt_root_dir}/styletts2_libriTTS/config.yml",
-                                                              model_name="styletts2")
-    syn_styles = get_synStyle_from_file(style, split_char='|', dataset_name=dataset)  # emotion changed
-    synTexts = get_synText_from_file(txt)
-    #out_dir = "/hdd/StableTTS/exp/styletts2/random_10"
-    out_dir = f"/home/rosen/ckpt/exp/mdit_tts_{dataset}_test/styletts2/random"
-    #out_dir = f"/home/rosen/Project/StyleTTS2/res/styletts2/alpha{alpha}_beta{beta}"
-    out_dir = f"/home/rosen/Project/StyleTTS2/res/piolot_test/styletts2/sharpLastPreserve_alpha{alpha}_beta{beta}"
-
-    if not os.path.isdir(out_dir):
-        Path(out_dir).mkdir(exist_ok=True, parents=True)
-    syn_speech(synTexts, syn_styles, out_dir, model, sampler, model_params, alpha=alpha, beta=beta)
+    Path(args.out_dir).mkdir(exist_ok=True, parents=True)
+    syn_speech(synTexts, syn_styles, args.out_dir, model, sampler, model_params,
+               alpha=args.alpha, beta=args.beta)
 
     # Save utmos_v2 score
-    from exec_utmosv2 import run_utmos
-    mean_mos, std_mos, mos_list = run_utmos(out_dir, 1)
-    print(f"\nAverage UTMOS-v2: {mean_mos:.4f} ± {std_mos:.4f}")
-    append_sentence_to_file("exp/utmosv2_log.txt", f"Average UTMOS-v2 of {out_dir}: {mean_mos:.4f} ± {std_mos:.4f}")
+    #from exec_utmosv2 import run_utmos
+    #mean_mos, std_mos, mos_list = run_utmos(args.out_dir, 1)
+    #print(f"\nAverage UTMOS-v2: {mean_mos:.4f} ± {std_mos:.4f}")
+    #append_sentence_to_file("exp/utmosv2_log.txt", f"Average UTMOS-v2 of {args.out_dir}: {mean_mos:.4f} ± {std_mos:.4f}")

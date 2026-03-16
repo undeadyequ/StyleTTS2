@@ -10,22 +10,22 @@ import torch.nn.functional as F
 class DitWrapper(nn.Module):
     """ add FiLM layer to condition time embedding to DiT """
     def __init__(self, hidden_channels, filter_channels, num_heads, kernel_size=3, p_dropout=0.1, gin_channels=0,
-                 time_channels=0, cross_attn=False, official_dit=False):
+                 time_channels=0, cross_attn=False, glb_t_concate=False):
         super().__init__()
-        self.official_dit = official_dit
-        if self.official_dit:
+        self.glb_t_concate = glb_t_concate
+        if self.glb_t_concate:
             self.lr1 = nn.Linear(gin_channels + time_channels, gin_channels)
-            self.conv1 = nn.Conv1d(hidden_channels + hidden_channels, hidden_channels, 1)
         else:
             self.time_fusion = FiLMLayer(hidden_channels, time_channels)
         self.cross_attn = cross_attn
         if self.cross_attn:
             self.block = DiTConVBlockCross(hidden_channels, filter_channels, num_heads, kernel_size, p_dropout, gin_channels)
         else:
+            self.conv1 = nn.Conv1d(hidden_channels + hidden_channels, hidden_channels, 1)  # post-processing concate(u, x_t)
             self.block = DiTConVBlock(hidden_channels, filter_channels, num_heads, kernel_size, p_dropout, gin_channels)
             
     def forward(self, x, c, t, x_mask, seq_style, p_mask, q_f_pos=None, k_f_pos=None, regularize_attn_map=None):
-        if self.official_dit:
+        if self.glb_t_concate:
             c = self.lr1(torch.concat([c, t], dim=1))
         else:
             x = self.time_fusion(x, t) * x_mask
@@ -81,7 +81,7 @@ class TimestepEmbedding(nn.Module):
 # reference: https://github.com/shivammehta25/Matcha-TTS/blob/main/matcha/models/components/decoder.py
 class Decoder(nn.Module):
     def __init__(self, noise_channels, cond_channels, hidden_channels, out_channels, filter_channels, dropout=0.1, n_layers=1,
-                 n_heads=4, kernel_size=3, gin_channels=0, use_lsc=True, cross_attn=False, crossCond_channels=256, official_dit=False):
+                 n_heads=4, kernel_size=3, gin_channels=0, use_lsc=True, cross_attn=False, crossCond_channels=256, glb_t_concate=False):
         super().__init__()
         self.noise_channels = noise_channels
         self.cond_channels = cond_channels
@@ -89,12 +89,10 @@ class Decoder(nn.Module):
         self.out_channels = out_channels
         self.filter_channels = filter_channels
 
-        if official_dit:
-            self.use_lsc = False
-            self.cross_attn = False
-        else:
-            self.use_lsc = use_lsc # whether to use unet-like long skip connection
-            self.cross_attn = cross_attn
+        # official dit related setting
+        self.use_lsc = use_lsc # whether to use unet-like long skip connection
+        self.cross_attn = cross_attn
+        self.glb_t_concate = glb_t_concate
 
         self.time_embeddings = SinusoidalPosEmb(hidden_channels)
         self.time_mlp = TimestepEmbedding(hidden_channels, hidden_channels, filter_channels)
@@ -109,7 +107,7 @@ class Decoder(nn.Module):
 
         self.in_proj = nn.Conv1d(hidden_channels + noise_channels, hidden_channels, 1) # cat prior and xt as input
         self.blocks = nn.ModuleList([DitWrapper(hidden_channels, filter_channels, n_heads, kernel_size, dropout, gin_channels,
-                                                hidden_channels, cross_attn, official_dit) for _ in range(n_layers)])  # wrapper t
+                                                hidden_channels, cross_attn, glb_t_concate) for _ in range(n_layers)])  # wrapper t
         self.final_proj = nn.Conv1d(hidden_channels, out_channels, 1)                  #
 
         # prenet for reference embedder
@@ -179,12 +177,12 @@ class Decoder(nn.Module):
             ############### Check code #######33
             #print(f"block: {idx}: before block:", torch.mean(torch.abs(x), dim=1))
             x, attn_map = block(x, c, t, mask, seq_style, p_mask, q_f_pos=q_f_pos, k_f_pos=k_f_pos, regularize_attn_map=regularize_attn_map)
-            if return_attn_map:
+            if return_attn_map and attn_map is not None:
                 attn_maps.append(attn_map)
         output = self.final_proj(x * mask)
 
         if return_attn_map:
-            attn_maps = torch.stack(attn_maps, dim=0)
-            return output * mask, attn_maps
+            stacked = torch.stack(attn_maps, dim=0) if len(attn_maps) > 0 else None
+            return output * mask, stacked
         else:
             return output * mask # only output for ode trajectory

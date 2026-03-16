@@ -131,6 +131,23 @@ def convert_json_to_pd2_fine(output_dict, custom_order=None, need_multi_index=Tr
         index="model",
         columns=["emotion", "fine_cate"],
         values="value")
+
+    if need_print_latex:
+        for label, df in [("pitch", pivot_df_pitch), ("energy", pivot_df_energy)]:
+            print(f"\n--- {label} ---")
+            df_marked = df.copy()
+            for col in df.columns:
+                sorted_vals = df[col].sort_values(ascending=True).unique()
+                best = sorted_vals[0]
+                second = sorted_vals[1] if len(sorted_vals) > 1 else None
+                df_marked[col] = df[col].apply(
+                    lambda x, b=best, s=second:
+                    f"\\first{{{x}}}" if x == b else
+                    (f"\\second{{{x}}}" if s is not None and x == s else f"{x}")
+                )
+            for idx, row in df_marked.iterrows():
+                print(f"{idx} & " + " & ".join(row.astype(str)) + r" \\")
+
     return pivot_df_pitch, pivot_df_energy
 
 
@@ -308,7 +325,7 @@ def get_synStyle_from_file(synStyle_f,
         elif dataset_name == "libritts":
             for speech_path, txt in syn_styles:
                 # search emotion index
-                spk = speech_path.split("/")[6]
+                spk = speech_path.split("/")[-3]
                 emo = "Neutral"
                 styles.append((spk, emo, txt, speech_path))
     return styles

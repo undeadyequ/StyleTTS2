@@ -330,6 +330,25 @@ def vis_psd_contour2(
         "reference": "Reference",
     }
 
+    # Academic style (enlarged so fonts match ~10pt caption after shrink in paper)
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "STIXGeneral", "DejaVu Serif"],
+        "mathtext.fontset": "stix",
+        "font.size": 36,
+        "axes.titlesize": 22,
+        "axes.labelsize": 36,
+        "legend.fontsize": 36,
+        "xtick.labelsize": 20,
+        "ytick.labelsize": 20,
+        "axes.linewidth": 1.2,
+        "xtick.direction": "in",
+        "ytick.direction": "in",
+        "xtick.major.size": 5,
+        "ytick.major.size": 5,
+        "figure.dpi": 300,
+    })
+
     if emotions is None:
         emotions = list(pitch_phonemes_dict.keys())
 
@@ -338,9 +357,9 @@ def vis_psd_contour2(
 
     fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
     if suptitle is not None:
-        fig.suptitle(suptitle, fontsize=14, y=0.98)
+        fig.suptitle(suptitle, fontsize=24, y=0.98)
     if subtitle:
-        fig.text(0.5, 0.955, subtitle, ha="center", va="top", fontsize=11)
+        fig.text(0.5, 0.975, subtitle, ha="center", va="top", fontsize=20)
 
     legend_handles = None
     legend_labels = None
@@ -348,7 +367,7 @@ def vis_psd_contour2(
     for idx, emotion in enumerate(emotions):
         r, c = divmod(idx, ncols)
         ax = axes[r][c]
-        ax.set_title(str(emotion), fontsize=12)
+        ax.set_title(str(emotion), fontsize=36)
 
         emo_dict = pitch_phonemes_dict.get(emotion, {})
         if not emo_dict:
@@ -416,13 +435,13 @@ def vis_psd_contour2(
             loc="upper center",
             ncol=min(legend_ncol, len(legend_labels)),
             frameon=True,
-            bbox_to_anchor=(0.5, 0.915),
+            bbox_to_anchor=(0.5, 0.975),
         )
 
     plt.tight_layout(rect=[0, 0, 1, 0.9])
 
     if savepath is not None:
-        fig.savefig(savepath, dpi=200, bbox_inches="tight")
+        fig.savefig(savepath, dpi=600, bbox_inches="tight")
 
     if show:
         plt.show()
@@ -869,6 +888,7 @@ def vis_tbh_cross_attention_time_grouped(
     dashed_time_separator=True,
     savepath=None,
     title=None,
+    figsize=(14.8, 4.8),
 ):
     """
     Plot cross-attention maps with layout:
@@ -884,7 +904,6 @@ def vis_tbh_cross_attention_time_grouped(
     A = _to_numpy(tbh_attn)
     assert A.ndim == 5, f"Expected (T,B,H,L,L), got {A.shape}"
     T, B, H, L1, L2 = A.shape
-    assert (T, B, H) == (2, 2, 4), f"Expected (2,2,4,L,L), got {(T,B,H)}"
     if L1 != L2:
         tbh_attn = tbh_attn[:, :min(L1, L2), :min(L1, L2)]
         L1 = min(L1, L2)
@@ -897,11 +916,11 @@ def vis_tbh_cross_attention_time_grouped(
     # -----------------------------
     plt.rcParams.update({
         "font.family": "serif",
-        "font.size": 9,
-        "axes.titlesize": 9,
-        "axes.labelsize": 9,
-        "xtick.labelsize": 8,
-        "ytick.labelsize": 8,
+        "font.size": 40,
+        "axes.titlesize": 40,
+        "axes.labelsize": 36,
+        "xtick.labelsize": 24,
+        "ytick.labelsize": 24,
         "figure.dpi": 300,
     })
 
@@ -918,7 +937,7 @@ def vis_tbh_cross_attention_time_grouped(
     fig, axes = plt.subplots(
         nrows=nrows,
         ncols=ncols,
-        figsize=(14.8, 4.8),
+        figsize=figsize,
         constrained_layout=True,
     )
 
@@ -957,13 +976,12 @@ def vis_tbh_cross_attention_time_grouped(
                 ax.set_yticks([0, L // 2, L - 1])
 
                 # X label only on bottom row
-                if b == nrows - 1:
-                    ax.set_xlabel("Prosodic frame index")
+                if b == nrows - 1 and h == 1 and t == 0:  # only show x label once
+                    ax.set_xlabel("                          Prosodic frame index")
 
     # Shared colorbar
     cbar = fig.colorbar(images[0], ax=axes, fraction=0.02, pad=0.01)
     cbar.set_label("Cross-attention weight")
-
     # -----------------------------
     # Add time-group headers above each group of 4 heads
     # -----------------------------
@@ -990,7 +1008,7 @@ def vis_tbh_cross_attention_time_grouped(
             time_labels[t],
             ha="center",
             va="bottom",
-            fontsize=10,
+            fontsize=40,
             fontweight="bold",
             zorder=20,  # ensure on top
         )

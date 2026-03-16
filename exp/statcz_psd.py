@@ -92,8 +92,10 @@ def statcz_psd_mcd(prosody_dict, exclude_zero=False):
                         ref_i = psd_phone_sid["speechid"][i].split("ref")[1].split("_")[0]
                         #ref_i = int(psd_phone_sid["speechid"][i].split("_")[-2][-1])
                         # get reference index of which serve as reference to speech i
-                        ref_i_index = [i for i, v in enumerate(prosody_dict[spk][emo]["reference"]["speechid"]) if f"ref{ref_i}" in v]
-                        assert len(ref_i_index) == 1
+                        ref_i_index = [j for j, v in enumerate(prosody_dict[spk][emo]["reference"]["speechid"]) if f"ref{ref_i}" in v]
+                        if len(ref_i_index) != 1:
+                            print(f"  ⚠ Skipping {psd_phone_sid['speechid'][i]}: ref{ref_i} not uniquely found in reference speechids")
+                            continue
                         ref_i_index = ref_i_index[0]
 
                         p_diff, e_diff = calcualte_pitch_energy_dtw(prosody_dict[spk][emo]["reference"]["pitch"][ref_i_index], psd_phone_sid["pitch"][i],
@@ -113,9 +115,9 @@ def statcz_psd_mcd(prosody_dict, exclude_zero=False):
     for spk_data in psd_mcd_stat_res.values():
         for emotion, models in spk_data.items():
             if emotion not in collector:
-                collector[emotion] = {m: [] for m in models}
+                collector[emotion] = {}
             for model, values in models.items():
-                collector[emotion][model].append(values)
+                collector[emotion].setdefault(model, []).append(values)
     result = {}
     for emotion, models in collector.items():
         result[emotion] = {}

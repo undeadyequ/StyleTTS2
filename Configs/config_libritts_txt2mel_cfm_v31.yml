@@ -1,18 +1,18 @@
-## Do not joint training Style encoder
+## bin = 8
 
-log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_dit_v1"   # CHANGE
+log_dir: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v31"   # CHANGE
 first_stage_path: "first_stage.pth"
-data_ratio: 1
+data_ratio: 1  # 0.005  0.6
 save_freq: 2
 log_interval: 10
 device: "cuda"
 epochs_1st: 50 # number of epochs for first stage training (pre-training)
 epochs_2nd: 50 # number of peochs for second stage training (joint training)
-batch_size: 16  # 1st: 32, 2nd: 16
+batch_size: 24  # 1st: 24?32?, 2nd: 16
 max_len: 600 # maximum number of frames 600
-#pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm/epoch_2nd_00014.pth"
-pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_dit_v1/epoch_2nd_00030.pth"
-second_stage_load_pretrained: true # set to true if the pre-trained model is for 2nd stage
+#pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v21/epoch_2nd_00024.pth"
+pretrained_model: "/home/rosen/ckpt/styletts2_libriTTS/first_txt2mel_cfm_v31/epoch_1st_00004.pth"
+second_stage_load_pretrained: false # set to true if the pre-trained model is for 2nd stage
 load_only_params: false # set to true if do not want to load epoch numbers and optimizer parameters
 
 F0_path: "Utils/JDC/bst.t7"
@@ -37,8 +37,9 @@ preprocess_params:
 
 model_params:
   multispeaker: true
+  learn_monoAttn: false
 
-  dim_in: 64 
+  dim_in: 64
   hidden_dim: 512
   max_conv_dim: 512
   repeat_num: 2     # HYPE 4 -> 2
@@ -48,8 +49,18 @@ model_params:
   n_token: 178 # number of phoneme tokens
   max_dur: 50 # maximum duration of a single phoneme
   style_dim: 128 # style vector size   128 -> 256 -> 128
+  trd_dim: 4
+  n_bins: 32
   dropout: 0.2
-  learn_monoAttn: false
+  cond_prosody_type: "bertfusion"  # hierstyle, ref, predict, simplefuse, simplefuse_v3, bertfusion
+  trd_min: 50
+  trd_max: 600
+  stats_pe: true
+  pe_min_max: # place holder, use need set it up after correct one computed, and do again
+    - 5
+    - 600
+    - -9.5
+    - 12.37
 
   decoder:
     type: "mdit_cfm"
@@ -60,7 +71,7 @@ model_params:
       hidden: 768 # hidden size of SLM
       nlayers: 13 # number of layers of SLM
       initial_channel: 64 # initial channels of SLM discriminator head
-  
+
   # style diffusion model config
   diffusion:
     embedding_mask_proba: 0.1
@@ -73,7 +84,7 @@ model_params:
 
     # diffusion distribution config
     dist:
-      sigma_data: 0.2 # placeholder for estimate_sigma_data set to false
+      sigma_data: 0.2 # placeholder for estimate_sigma_data set to false (updated automatically)
       estimate_sigma_data: true # estimate sigma_data from the current batch if set to true
       mean: -3.0
       std: 1.0
@@ -83,9 +94,10 @@ loss_params:
     lambda_adv: 1. # adversarial loss (1st & 2nd stage)
     lambda_reg: 1. # adversarial regularization loss (1st & 2nd stage)
     lambda_fm: 0.1 # feature matching loss (1st & 2nd stage)
-    
+
     lambda_mono: 1. # monotonic alignment loss (1st stage, TMA)
     lambda_s2s: 1. # sequence-to-sequence loss (1st stage, TMA)
+    lambda_monoAttn: 1.
     TMA_epoch: 5 # TMA starting epoch (1st stage)
 
     lambda_F0: 1. # F0 reconstruction loss (2nd stage)
@@ -94,15 +106,15 @@ loss_params:
     lambda_ce: 20. # duration predictor probability output CE loss (2nd stage)
     lambda_sty: 1. # style reconstruction loss (2nd stage)
     lambda_diff: 1. # score matching loss (2nd stage)
-    
-    diff_epoch: 10 # style diffusion starting epoch (2nd stage)
-    joint_epoch: 15 # joint training starting epoch (2nd stage)
+
+    diff_epoch: 10 # style diffusion starting epoch (2nd stage)  10
+    joint_epoch: 15 # joint training starting epoch (2nd stage)  15
 
 optimizer_params:
   lr: 0.0001 # general learning rate
   bert_lr: 0.00001 # learning rate for PLBERT
   ft_lr: 0.00001 # learning rate for acoustic modules
-  
+
 slmadv_params:
   min_len: 400 # minimum length of samples
   max_len: 500 # maximum length of samples
@@ -123,7 +135,8 @@ cfm_config:
     kernel_size: 3
     p_dropout: 0.1
     gin_channels: 128
+    cross_attn: true           # global/seq style size
     cfg_dropout: 0.2
-    cross_attn: false      # =false for official_dit
-    use_lsc: false         # =false for official_dit
-    glb_t_concate: true    # =true for official_dit
+    use_lsc: false
+    prosody_fusion: false     #
+    glb_t_concate: true       # =true for official_dit

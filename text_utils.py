@@ -22,5 +22,5 @@ class TextCleaner:
             try:
                 indexes.append(self.word_index_dictionary[char])
             except KeyError:
-                print(text)
+                print("unrecognized char exist", char, text)
         return indexes

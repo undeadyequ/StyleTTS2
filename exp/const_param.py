@@ -103,7 +103,8 @@ model_meta = {
         "styletts2_txt2mel": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel/epoch_2nd_00028.pth", "first_txt2mel/config_libritts_txt2mel.yml"],
         "drawspeech": ["root_dir", "", ""],
         "hierspeech": ["", ""],
-        "DiT": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_dit_v1/epoch_2nd_00048.pth", "first_txt2mel_cfm_dit_v1/config_libritts_txt2mel_cfm_dit_v1.yml"],
+        "DiT_11": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_dit_v1/epoch_2nd_00048.pth", "first_txt2mel_cfm_dit_v1/config_libritts_txt2mel_cfm_dit_v1.yml"],
+        "DiT":    ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_dit_v1/epoch_2nd_00048.pth", "first_txt2mel_cfm_dit_v1/config_libritts_txt2mel_cfm_dit_v1.yml"],
         # monoDiT multi version
         "monoDiT": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
         "monoDiT_ab0307": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v10/epoch_2nd_00048.pth", "first_txt2mel_cfm_v10/config_libritts_txt2mel_cfm_v10.yml"],
@@ -124,8 +125,16 @@ model_meta = {
                             "first_txt2mel_cfm_v27/config_libritts_txt2mel_cfm_v27.yml"],
         "decodit_cfm_v28": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v28/epoch_2nd_00038.pth",
                             "first_txt2mel_cfm_v28/config_libritts_txt2mel_cfm_v28.yml"],
-        "decodit_cfm_v29": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v29/epoch_2nd_00052.pth",  # cmp
-                                    "first_txt2mel_cfm_v29/config_libritts_txt2mel_cfm_v29.yml"]
+        "decodit_cfm_v29": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v29/epoch_2nd_00058.pth",  # DTW cmp: epoch 52.  utmos cmp: 58
+                                    "first_txt2mel_cfm_v29/config_libritts_txt2mel_cfm_v29.yml"],
+        "decodit_cfm_v34epoch20": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v34/epoch_2nd_00020.pth",
+                            "first_txt2mel_cfm_v34/config_libritts_txt2mel_cfm_v34.yml"],
+        "decodit_cfm_v34": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v34/epoch_2nd_00030.pth",
+                               "first_txt2mel_cfm_v34/config_libritts_txt2mel_cfm_v34_bk.yml"],
+        "decoditICL_cfm_v36": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v36/epoch_2nd_00048.pth",
+                               "first_txt2mel_cfm_v36/config_libritts_txt2mel_cfm_v36_bk.yml"],  # 44 is best for quality and dtw
+        "decoditICL_cfm_v37": ["/home/rosen/ckpt/styletts2_libriTTS", "first_txt2mel_cfm_v37/epoch_2nd_00052.pth",
+                                       "first_txt2mel_cfm_v37/config_libritts_txt2mel_cfm_v37_bk.yml"]
         }
 
 model_infer_config = {
@@ -135,7 +144,7 @@ model_infer_config = {
             "diffusion_steps": 10,
             "embedding_scale": 1,
         },
-        "DiT": {
+        "DiT_11": {       # before 2026/2/19
             "alpha": 1,
             "beta": 1,
             "diffusion_steps": 10,
@@ -147,6 +156,18 @@ model_infer_config = {
             "Vis_F0": False,
             "fuse_beta": 0.3     # reference aware
         },
+        "DiT": {
+                "alpha": 0.3,
+                "beta": 0.7,
+                "diffusion_steps": 10,
+                "embedding_scale": 1,
+                "style_dim": 256,
+                "mix_ref_pe_type": "none",  # hyper
+                "cfg_strength": 3,
+                "mono_guide_delta": -1.0,  # monoDiT
+                "Vis_F0": False,
+                "fuse_beta": 0.3     # reference aware
+            },
         "styletts2_txt2mel": {},
         "drawspeech": {},
         "hierspeech": {},
@@ -297,5 +318,53 @@ model_infer_config = {
             "drop_trend": False,
             "hierStyle": True,
             "need_uv_mask": True
-        }
+        },
+        "decodit_cfm_v34epoch20": {
+            "alpha": 0.3,
+            "beta": 0.7,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "drop_trend": False,
+            "hierStyle": True,
+            "need_uv_mask": True
+        },
+        "decodit_cfm_v34": {
+            "alpha": 0.3,
+            "beta": 0.7,
+            "diffusion_steps": 10,
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "drop_trend": False,
+            "hierStyle": True,
+            "need_uv_mask": True
+        },
+        "decoditICL_cfm_v36": {
+            "alpha": 0.3,
+            "beta": 0.7,
+            "diffusion_steps": 10,   # sampler diffusion steps
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "drop_trend": False,
+            "hierStyle": True,
+            "need_uv_mask": True
+        },
+        "decoditICL_cfm_v37": {
+            "alpha": 0.3,
+            "beta": 0.7,
+            "diffusion_steps": 10,  # sampler diffusion steps
+            "embedding_scale": 1,
+            "style_dim": 256,
+            "mix_ref_pe_type": "none",  # ref_pred_add none ref_pred_gate
+            "cfg_strength": 3,
+            "drop_trend": False,
+            "hierStyle": True,
+            "need_uv_mask": True
+        },
 }

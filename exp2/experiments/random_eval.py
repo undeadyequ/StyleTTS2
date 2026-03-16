@@ -13,6 +13,7 @@ from exp2.pipeline.synthesis_stage import SynthesisStage
 from exp2.pipeline.extraction_stage import PSDExtractionStage
 from exp2.pipeline.statistics_stage import StatisticsStage
 from exp2.pipeline.quality_stage import QualityEvaluationStage
+from exp2.pipeline.speaker_sim_stage import SpeakerSimilarityStage
 
 
 class RandomEvaluation:
@@ -33,10 +34,11 @@ class RandomEvaluation:
 
         # Build pipeline
         pipeline = Pipeline([
-            SynthesisStage(self.config.models),
-            PSDExtractionStage(self.config.psd_level),
-            StatisticsStage(),
-            QualityEvaluationStage(),
+            SynthesisStage(self.config.models),         # stage 0
+            PSDExtractionStage(self.config.psd_level),  # stage 1
+            StatisticsStage(),                          # stage 2
+            QualityEvaluationStage(),                   # stage 3
+            SpeakerSimilarityStage(),                   # stage 4
         ])
 
         # Create context

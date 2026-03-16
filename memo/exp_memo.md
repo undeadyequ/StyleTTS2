@@ -192,6 +192,8 @@ psd_a_b.json | psdcond_a_b.json -> pitch | pitchCond of monoDiT_pred, monoDiT_re
 ### t4: ablation of fuse and mono by utmos and dtw
 
 ### t5: robustness to length
+- pitch: replace sc of hierspeech and decodDiT
+- Energy: kill down DiT 20%
 
 ### t6: robustness to pos
 

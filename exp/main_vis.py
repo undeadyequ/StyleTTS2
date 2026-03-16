@@ -431,6 +431,7 @@ def draw_pitch_energy_contours(psd_json_path, vis_psd_config, out_pitch_img, out
         xtick_stride=1,  # show every phoneme label (as in your screenshot)
         rotate_xticks=0,
         savepath=out_pitch_img,
+        figsize=(36, 24)
     )
     vis_psd_contour2(
         vis_energy_phonemes_dict,
@@ -440,6 +441,7 @@ def draw_pitch_energy_contours(psd_json_path, vis_psd_config, out_pitch_img, out
         xtick_stride=1,  # show every phoneme label (as in your screenshot)
         rotate_xticks=0,
         savepath=out_energy_img,
+        figsize=(36, 24)
     )
 
 
@@ -458,18 +460,23 @@ def draw_tbh_cross_attn(tbh_attn, out_pitch_img="tbh_cross_attn.pdf", b=[0, 5]):
     tbh_attn_sel = tbh_attn[tt, bb, hh, ...]
     #tbh_attn_sel = tbh_attn[bb, 0, hh, ...]
 
-    # OUT
-    vis_tbh_cross_attention_time_grouped(
-        tbh_attn_sel,
-        time_labels=[r"$t=0$ (early)", r"$t=T$ (late)"],
-        block_labels=["Block 1", "Block 6"],
-        head_labels=["Head 1", "Head 2", "Head 3", "Head 4"],
-        title=None,
-        dashed_time_separator=False,
-        savepath=out_pitch_img,
-    )
-
-
+    # OUT: one image per time step
+    base, ext = os.path.splitext(out_pitch_img)
+    time_configs = [
+        (0, r"$t=0$ (early)", f"{base}_t0{ext}"),
+        (1, r"$t=T$ (late)",  f"{base}_t1{ext}"),
+    ]
+    for t_idx, time_label, savepath in time_configs:
+        vis_tbh_cross_attention_time_grouped(
+            tbh_attn_sel[t_idx:t_idx + 1],   # shape (1, B, H, L, L)
+            time_labels=[time_label],
+            block_labels=["$l=1$", "$l=6$"],
+            head_labels=["$h=1$", "$h=2$", "$h=3$", "$h=4$"],
+            title=None,
+            dashed_time_separator=False,
+            savepath=savepath,
+            figsize=(18, 12)
+        )
 
 if __name__ == '__main__':
     ablation_dir = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono_v4"
@@ -480,11 +487,12 @@ if __name__ == '__main__':
     PSDCONTOUR = False # Fig 3
     ATTNSIGMA = False # Fig 4
     ATTNMEL = False # Fig 5
-    ATTNTBH = False  # Fig 6, 7
+    ATTNTBH = True  # Fig 6, 7
     PSDCONTOUR_SIGMA = False
     PSDCOND_SYN_GAMMA = False
     HISTORGRAM = False
-    LOSS_PRINT = True
+    PHONEME_STD_HISTOGRAM = False
+    LOSS_PRINT = False
     if PSDCONTOUR:
         root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
         # IN
@@ -502,8 +510,8 @@ if __name__ == '__main__':
                     "libritts": {"show_spk": "0019", "show_emo": "Surprise", "tick_gran": "syllable", "show_txt": (3, 4)}}  # ref3:  15 - 19
 
                 # OUT
-                out_pitch_img = os.path.join(root_dir, f"img_out/psdcontour/contour_pitch_ref{show_text_esd[0]}_syn{show_text_esd[1]}.pdf")
-                out_energy_img = os.path.join(root_dir, f"img_out/psdcontour/contour_energy_ref{show_text_esd[0]}_syn{show_text_esd[1]}.pdf")
+                out_pitch_img = os.path.join(root_dir, f"img_out/psdcontour/contour_pitch_ref{show_text_esd[0]}_syn{show_text_esd[1]}_v2.pdf")
+                out_energy_img = os.path.join(root_dir, f"img_out/psdcontour/contour_energy_ref{show_text_esd[0]}_syn{show_text_esd[1]}_v2.pdf")
 
                 vis_pitch_path, vis_energy_path = (
                     os.path.join(root_dir, f"img_out/psdcontour/vis_pitch_{cmp_modelnames_combine}.json"),
@@ -533,24 +541,24 @@ if __name__ == '__main__':
 
     if ATTNTBH:
         attn_dir_notrainMono = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono_v4/monoDiT_ablation/none_mm10_f02_attn"
-        attn_dir_notrainMono_infer05 = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono_v4/monoDiT_ablation/none_m05_f02_attn"
+        attn_dir_notrainMono_infer05 = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono_v4/monoDiT_ablation/none_m05_f02_attn"  # monotonic
         attn_dir_trainMono = "/home/rosen/ckpt/exp/mdit_tts_esd_ablation_mono_v6/monoDiT_ablation/none_mm10_f02_attn"  # not used
 
         test_attn_dir = "/home/rosen/Project/StyleTTS2/res/monoStyle_compare2/mdit_cfm_v10_epoch48_esd_seed0_ref_pe_m10_fuse02_0.3_0.7_v10_epoch48_attn"
         test_attn_dir = "/home/rosen/Project/StyleTTS2/res/hierstyle_test/mdit_cfm_v10_epoch48_esd_03_07_attn"
         root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
 
-        for ref_ind in range(1):
-            for syn_ind in range(1):
-                ref_ind, syn_ind = 0, 3   # CHAMPION (0, 3)  (0, 0)
-                for figName, attn_dir in zip(["test"], [test_attn_dir]):
-                #for figName, attn_dir in zip(["trainMono", "noTrainMono", "noTrainMonoInfer05"], [attn_dir_trainMono, attn_dir_notrainMono, attn_dir_notrainMono_infer05]):
-                    #attn_path = os.path.join(attn_dir, f"spk0019_Surprise_ref{ref_ind}_syn{syn_ind}.npy")
-                    attn_path = os.path.join(attn_dir, "spk0019_Angry_ref2_syn1.npy")
-                    attn_maps = np.load(attn_path, allow_pickle=True)
-                    out_pitch_img = os.path.join(root_dir, "img_out/tbh_cross_attn", f"tbh_cross_attn_ref{ref_ind}_syn{syn_ind}_{figName}_v17.pdf")
-                    out_pitch_img = "/home/rosen/Project/StyleTTS2/res/hierstyle_test/tbh_hier_style_v10.png"
-                    draw_tbh_cross_attn(attn_maps, out_pitch_img, b=[3, 4])
+        #for ref_ind in range(1):
+        #    for syn_ind in range(1):
+        ref_ind, syn_ind = 0, 3   # CHAMPION (0, 3)  (0, 0)
+        for figName, attn_dir in zip(["test"], [test_attn_dir]):
+        #for figName, attn_dir in zip(["trainMono", "noTrainMono", "noTrainMonoInfer05"], [attn_dir_trainMono, attn_dir_notrainMono, attn_dir_notrainMono_infer05]):
+            #attn_path = os.path.join(attn_dir, f"spk0019_Surprise_ref{ref_ind}_syn{syn_ind}.npy")
+            attn_path = os.path.join(attn_dir, "spk0019_Surprise_ref3_syn1.npy")  # spk0019_Surprise_ref3_syn4.npy spk0019_Angry_ref2_syn1
+            attn_maps = np.load(attn_path, allow_pickle=True)
+            out_pitch_img = os.path.join(root_dir, "img_out/tbh_cross_attn", f"tbh_cross_attn_ref{ref_ind}_syn{syn_ind}_{figName}_v3.pdf")
+            #out_pitch_img = "/home/rosen/Project/StyleTTS2/res/hierstyle_test/tbh_hier_style_v10.png"
+            draw_tbh_cross_attn(attn_maps, out_pitch_img, b=[3, 4])
 
     if PSDCONTOUR_SIGMA:
         root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
@@ -606,13 +614,13 @@ if __name__ == '__main__':
         cond_syn_psd_cmp_json = os.path.join(root_dir, "img_out/psdcond_syn_gamma/cond_syn_psd_cmp.json")
 
         out_conPitch_img = os.path.join(root_dir, "img_out/psdcond_syn_gamma",
-                     f"pitch_contour_sigma.pdf")
+                     f"pitch_contour_sigma_v2.pdf")
         out_synPitch_img = os.path.join(root_dir, "img_out/psdcond_syn_gamma",
-                                     f"pitch_contour_sigma_syn.pdf")
+                                     f"pitch_contour_sigma_syn_v2.pdf")
         out_conEng_img = os.path.join(root_dir, "img_out/psdcond_syn_gamma",
-                                        f"energy_contour_sigma.pdf")
+                                        f"energy_contour_sigma_v2.pdf")
         out_synEng_img = os.path.join(root_dir, "img_out/psdcond_syn_gamma",
-                                        f"energy_contour_sigma_syn.pdf")
+                                        f"energy_contour_sigma_syn_v2.pdf")
 
         # Draw 5 pitch contours of ref, pred_sem_style, pred_fus_style_stren1, pred_fus_style_stren2, pros_quant_style
         psd_syn_json = "/home/rosen/ckpt/exp2/grid_ablation_ablation_esd/psd_aggregated.json"
@@ -656,47 +664,49 @@ if __name__ == '__main__':
         # Pitch contour comparison (predicted)
         plot_f0_comparison(
             contours=[f0_ref, f0_sem_style, np.array(f0_pro_style_quant) * 20, f0_fus_style_stren1],
-            labels=["Reference", "Semantic Style", "Prosodic Style (quantized)", r"Semantic-Prosodic Style ($\gamma = 1.0$)"],
+            labels=["Reference", "Predicted by semantic style", "Predicted by prosodic style (quantized)", r"Predicted by semantic-prosodic style"],
             out_path=out_conPitch_img,
             target_len=len(f0_fus_style_stren1),
             ylabel=r"$F_0$ (Hz)",
-            ylim=(0, 800),
-            legend_ncol=2  # Two-column compact legend
+            ylim=(0, 700),
+            figsize = (16, 10),
+            legend_ncol=1  # Two-column compact legend
         )
         # Pitch contour comparison (synthesized)
         plot_f0_comparison(
             contours=[f0_ref, f0_sem_style_syn, f0_fus_style_stren1_syn],
-            labels=["Reference", "Conditioned on Semantic style", r"Conditioned on Semantic-Prosodic Style ($\gamma = 1.0$)"],
+            labels=["Reference", "Conditioned on semantic style", r"Conditioned on semantic-prosodic style"],
             out_path=out_synPitch_img,
             target_len=len(f0_fus_style_stren1_syn),
             ylabel=r"$F_0$ (Hz)",
-            ylim=(0, 700)
+            ylim=(0, 700),
+            figsize=(16, 10)
         )
 
         # Energy contour comparison (predicted)
         plot_f0_comparison(
             contours=[eng_ref, eng_sem_style, np.array(f0_pro_style_quant) / 3.0, eng_fus_style_stren1],
-            labels=["Reference", "Semantic Style", "Prosodic Style (quantized)", r"Semantic-Prosodic Style ($\gamma = 1.0$)"],
+            labels=["Reference", "Semantic style", "Prosodic style (quantized)", r"Semantic-prosodic style"],  # ($\gamma = 1.0$)
             out_path=out_conEng_img,
             target_len=len(eng_fus_style_stren1),
-            ylabel=r"Energy (normalized)"
+            ylabel=r"Energy (normalized)",
+            figsize=(14, 7)
             # ylim=None uses auto with 25% top margin
         )
         # Energy contour comparison (synthesized)
         plot_f0_comparison(
             contours=[eng_ref, eng_sem_style_syn, eng_fus_style_stren1_syn],
-            labels=["Reference", "Conditioned on Semantic style", r"Conditioned on Semantic-Prosodic Style ($\gamma = 1.0$)"],
+            labels=["Reference", "Conditioned on semantic style", r"Conditioned on semantic-prosodic style"],
             out_path=out_synEng_img,
             target_len=len(eng_fus_style_stren1_syn),
-            ylabel=r"Energy (normalized)"
+            ylabel=r"Energy (normalized)",
+            figsize=(14, 7),
         )
-
-
 
     if HISTORGRAM:
         # CONFIG
         root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
-        emotions = ["Neutral", "Angry", "Happy", "Sad", "Surprise"]  # 5 emotions
+        emotions = ["Angry", "Neutral", "Sad", "Happy", "Surprise"]  # 5 emotions
         models = ["monoDiT", "styletts2", "hierspeech", "drawspeech", "reference"]  # 6 models
 
         # IN
@@ -704,8 +714,7 @@ if __name__ == '__main__':
         replacement_dict_path = "/home/rosen/ckpt/exp/mdit_tts_esd_multiversion/psd_monoDiT_reference_0307_seed.json"
 
         # OUT
-        out_img = os.path.join(root_dir, "img_out/histogram", f"histogram_diffseeds_cmp.pdf")
-
+        out_img = os.path.join(root_dir, "img_out/histogram", f"histogram_diffseeds_cmp4.pdf")
 
         # replace monoDiT content or not in original dict
         if False:
@@ -716,7 +725,7 @@ if __name__ == '__main__':
             emo_model_pe_dict = replace_certain_key_value(emo_model_pe_dict_f, replacement_dict_path, replaced_dict_path="",
                                                           key_depth=2, key_name="monoDiT")["spk0019"]
         # create middle dict
-        if False:
+        if True:
             mean_pitch_dict = build_mean_pitch_dict(emo_model_pe_dict, "pitch")
             with open(out_img.replace(".png", ".json"), "w") as f:
                 json.dump(mean_pitch_dict, f, indent=2)
@@ -724,8 +733,21 @@ if __name__ == '__main__':
         middel_dict_path = "/home/rosen/ckpt/exp/mdit_tts_esd/img_out/histogram/histogram_diffseeds_cmp.json"
         with open(middel_dict_path, "r") as f:
             mean_pitch_dict = json.load(f)
-        fig, axes = plot_mean_f0_hist_kde_apsipa(emo_model_pe_dict, emotions, models, savepath=out_img, prosody_type="pitch",
-                                                 middleValue=mean_pitch_dict)
+        display_names = {
+            "DiT": "DiT-TTS",
+            "drawspeech": "Drawspeech",
+            "hierspeech": "Hierspeech++",
+            "monoDiT": "DeCoDiT-TTS",
+            "styletts2": "StyleTTS2",
+            "reference": "Reference",
+        }
+        fig, axes = plot_mean_f0_hist_kde_apsipa(None, emotions, models,
+                                                 savepath=out_img,
+                                                 prosody_type="pitch",  # emo_model_pe_dict
+                                                 middleValue=mean_pitch_dict,
+                                                 display_names=display_names,
+                                                 figsize=(18, 12)
+                                                 )
         """
         meta = extract_mean_f0_hist_kde_metadata(
             emo_model_pe_dict,
@@ -734,6 +756,101 @@ if __name__ == '__main__':
         with open("res/mean_f0_hist_kde_meta.json", "w") as f:
             json.dump(meta, f, indent=2)
         """
+
+    if PHONEME_STD_HISTOGRAM:
+        from exp.extract_psd import extract_phoneme_std
+        from exec_histogram import plot_phoneme_std_hist_kde_apsipa, build_phoneme_std_dict
+
+        root_dir = "/home/rosen/ckpt/exp/mdit_tts_esd"
+        emotions = ["Neutral", "Angry", "Happy", "Sad", "Surprise"]
+        models = ["monoDiT", "styletts2", "hierspeech", "drawspeech", "reference"]
+
+        # ASR model paths (same across all configs)
+        asr_path = "Utils/ASR/epoch_00080.pth"
+        asr_config = "Utils/ASR/config.yml"
+
+        # Extract or load cached phoneme-level std
+        std_json = os.path.join(root_dir, "phoneme_std_aggregated.json")
+        if not os.path.exists(std_json):
+            from exp.mel_config import MelConfig
+            std_dict = {}
+            for model_name in ["reference"] + [m for m in models if m != "reference"]:
+                speech_dir = os.path.join(root_dir, model_name, "random")
+                if not os.path.isdir(speech_dir):
+                    print(f"⚠ Skipping {model_name}: {speech_dir} not found")
+                    continue
+                std_dict = extract_phoneme_std(
+                    MelConfig, speech_dir, model_n=model_name,
+                    std_dict=std_dict, asr_path=asr_path, asr_config=asr_config)
+            with open(std_json, "w", encoding="utf-8") as f:
+                json.dump(std_dict, f, sort_keys=True, indent=4)
+            print(f"✓ Saved phoneme std to {std_json}")
+        else:
+            with open(std_json, "r") as f:
+                std_dict = json.load(f)
+
+        emo_model_std_dict = std_dict["spk0019"]
+
+        display_names = {
+            "DiT": "DiT-TTS",
+            "drawspeech": "Drawspeech",
+            "hierspeech": "Hierspeech++",
+            "monoDiT": "DeCoDiT-TTS",
+            "styletts2": "StyleTTS2",
+            "reference": "Reference",
+        }
+
+        # Pitch std histogram
+        out_img = os.path.join(root_dir, "img_out/histogram", "phoneme_pitch_std_hist.pdf")
+        os.makedirs(os.path.dirname(out_img), exist_ok=True)
+        plot_phoneme_std_hist_kde_apsipa(
+            emo_model_std_dict, emotions, models,
+            prosody_type="pitch_std", savepath=out_img,
+            display_names=display_names, figsize=(36, 6))
+        print(f"✓ Saved pitch std histogram to {out_img}")
+
+        # Energy std histogram
+        out_img_e = os.path.join(root_dir, "img_out/histogram", "phoneme_energy_std_hist.pdf")
+        plot_phoneme_std_hist_kde_apsipa(
+            emo_model_std_dict, emotions, models,
+            prosody_type="energy_std", savepath=out_img_e,
+            display_names=display_names, figsize=(36, 6))
+        print(f"✓ Saved energy std histogram to {out_img_e}")
+
+        # Average phoneme-level std per model per emotion
+        _dn = lambda m: display_names.get(m, m)
+        for ptype in ["pitch_std", "energy_std"]:
+            pooled = build_phoneme_std_dict(emo_model_std_dict, ptype)
+            label = "Pitch" if "pitch" in ptype else "Energy"
+            print(f"\n=== Average phoneme-level {label} std ===")
+            header = f"{'Model':<18}" + "".join(f"{e:<12}" for e in emotions) + f"{'Overall':<12}"
+            print(header)
+            print("-" * len(header))
+            for model in models:
+                vals_per_emo = []
+                row = f"{_dn(model):<18}"
+                for emo in emotions:
+                    vals = pooled.get(emo, {}).get(model, [])
+                    avg = np.mean(vals) if len(vals) > 0 else float('nan')
+                    vals_per_emo.extend(vals)
+                    row += f"{avg:<12.4f}"
+                overall = np.mean(vals_per_emo) if len(vals_per_emo) > 0 else float('nan')
+                row += f"{overall:<12.4f}"
+                print(row)
+
+            # Save to JSON
+            avg_dict = {}
+            for model in models:
+                avg_dict[_dn(model)] = {}
+                for emo in emotions:
+                    vals = pooled.get(emo, {}).get(model, [])
+                    avg_dict[_dn(model)][emo] = float(np.mean(vals)) if len(vals) > 0 else None
+                all_vals = [v for emo in emotions for v in pooled.get(emo, {}).get(model, [])]
+                avg_dict[_dn(model)]["Overall"] = float(np.mean(all_vals)) if len(all_vals) > 0 else None
+            avg_json = os.path.join(root_dir, "img_out/histogram", f"avg_phoneme_{ptype}.json")
+            with open(avg_json, "w") as f:
+                json.dump(avg_dict, f, indent=2)
+            print(f"✓ Saved to {avg_json}")
 
     if LOSS_PRINT:
         log_paths = [

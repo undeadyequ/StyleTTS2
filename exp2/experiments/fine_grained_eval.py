@@ -35,6 +35,7 @@ from exp2.pipeline.synthesis_stage import SynthesisStage
 from exp2.pipeline.extraction_stage import PSDExtractionStage
 from exp2.pipeline.statistics_stage import StatisticsStage
 from exp2.pipeline.quality_stage import QualityEvaluationStage
+from exp2.pipeline.speaker_sim_stage import SpeakerSimilarityStage
 
 
 class FineGrainedEvaluation:
@@ -142,6 +143,9 @@ class FineGrainedEvaluation:
             print("PHASE 3: STATISTICS COMPUTATION")
             print("="*50)
 
+            # Derive category name from config name (e.g. "fine_position" → "position")
+            fine_category_name = self.config.name.removeprefix("fine_")
+
             # Process each fine category
             for fine_label in fine_categories.keys():
                 print(f"\n--- Computing statistics for fine category: {fine_label} ---")
@@ -154,6 +158,7 @@ class FineGrainedEvaluation:
                     "models": self.config.models,
                     "output_dir": str(self.paths.output_dir),
                     "style_syntex_name": fine_label,
+                    "fine_category_name": fine_category_name,
                     "start_step": 0,  # Stage index within this pipeline
                     "end_step": 0,
                     "mel_config": mel_config,
@@ -186,6 +191,32 @@ class FineGrainedEvaluation:
                 results = quality_pipeline.run(context)
                 all_results[fine_label] = results.get("wer_utmos_results", {})
 
+        # Phase 5: Speaker similarity for each fine category
+        if self.config.start_step <= 4 <= self.config.end_step:
+            print("\n" + "="*50)
+            print("PHASE 5: SPEAKER SIMILARITY (SIM-O / SIM-R)")
+            print("="*50)
+
+            for fine_label in fine_categories.keys():
+                print(f"\n--- Computing speaker similarity for fine category: {fine_label} ---")
+
+                sim_pipeline = Pipeline([
+                    SpeakerSimilarityStage(),
+                ])
+
+                context = {
+                    "models": self.config.models,
+                    "output_dir": str(self.paths.output_dir),
+                    "style_syntex_name": fine_label,
+                    "start_step": 0,
+                    "end_step": 0,
+                    "mel_config": mel_config,
+                }
+
+                results = sim_pipeline.run(context)
+                all_results.setdefault(fine_label, {})
+                all_results[fine_label]["sim_results"] = results.get("sim_results", {})
+
         print(f"\n{'='*60}")
         print("Fine-Grained Evaluation Complete!")
         print(f"Results saved to: {self.paths.output_dir}")
@@ -201,16 +232,16 @@ class FineGrainedConfig:
     LENGTH_RATIO = {
         "name": "length_ratio",
         "labels": ["05", "1", "2"],
-        "text_pattern": "s2_{label}.txt",
-        "style_file": "r1_50.txt",
+        "text_pattern": "fine_esd_syn_ratio{label}.txt",
+        "style_file": "fine_esd_ref.txt",
         "description": "Evaluation with different syn/ref length ratios (0.5x, 1x, 2x)"
     }
 
     POSITION = {
         "name": "position",
         "labels": ["same_pos", "diff_pos"],
-        "text_pattern": "s3_{label}.txt",
-        "style_file": "r2.txt",
+        "text_pattern": "fine_esd_syn_{label}.txt",
+        "style_file": "fine_esd_ref_pos.txt",
         "description": "Evaluation with same/different emphasis positions"
     }
 

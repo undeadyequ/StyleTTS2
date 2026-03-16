@@ -1,3 +1,14 @@
+"""Training script for CFMDecoderV4 (in-context learning via masked-mel conditioning).
+
+Key differences from train_first_txt2mel_cfm.py:
+  - Uses CFMDecoderV4 (flow_matching_v4.py), selected by `use_v4: true` in cfm_config.
+  - style_encoder is NOT used: compute_loss(x1, mu, seq_style) has no global `c`.
+  - learn_monoAttn / guided-attention regularisation removed (compute_loss returns None for attn_maps).
+  - Validation inference: ICL mode — utterance split ref=30% (2nd portion) / tgt=70% (1st portion);
+    matches F5-TTS mask_ratio_min=0.7. model.decoder called with mu_tgt, cond_ref, mu_ref,
+    seq_style_tgt, seq_style_ref.
+"""
+
 import os
 import os.path as osp
 import re
@@ -11,7 +22,6 @@ import warnings
 
 warnings.simplefilter('ignore')
 
-# load packages
 import random
 import json
 
@@ -34,7 +44,6 @@ from attrdict import AttrDict
 from Modules.hifi_gan.vocoder import Generator
 import glob
 from utils import r1_reg, adv_loss
-from utilities.guide_mask import make_guided_attention_masks2
 
 
 def scan_checkpoint(cp_dir, prefix):
@@ -52,10 +61,11 @@ def load_checkpoint_vocoder(filepath, device):
     print("Complete.")
     return checkpoint_dict
 
+
 logger = get_logger(__name__, log_level="DEBUG")
 
 @click.command()
-@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm_v35.yml', type=str)
+@click.option('-p', '--config_path', default='Configs/config_libritts_txt2mel_cfm_v36.yml', type=str)
 def main(config_path):
     config = yaml.safe_load(open(config_path))
 
@@ -94,7 +104,7 @@ def main(config_path):
     # load data
     train_list, val_list = get_data_path_list(train_path, val_path)
     if data_ratio < 1:
-        train_list = train_list[:int(len(train_list) * data_ratio)] # to save time
+        train_list = train_list[:int(len(train_list) * data_ratio)]
 
     train_dataloader = build_dataloader(train_list,
                                         root_path,
@@ -138,13 +148,9 @@ def main(config_path):
     }
 
     model_params = recursive_munch(config['model_params'])
-    multispeaker = model_params.multispeaker
     model = build_model(model_params, config['cfm_config'], text_aligner, pitch_extractor, plbert)
-    cfg_dropout = config['cfm_config'].get("cfg_dropout", 0)
-    learn_monoAttn = model_params.learn_monoAttn
 
-
-    best_loss = float('inf')  # best test loss
+    best_loss = float('inf')
 
     loss_params = Munch(config['loss_params'])
     TMA_epoch = loss_params.TMA_epoch
@@ -181,10 +187,6 @@ def main(config_path):
         n_down = model.text_aligner.module.n_down
     except:
         n_down = model.text_aligner.n_down
-
-    # wrapped losses for compatibility with mixed precision
-    #stft_loss = MultiResolutionSTFTLoss().to(device)
-    #gl = GeneratorLossMel(model.md).to(device)
 
     for epoch in range(start_epoch, epochs):
         running_loss = 0
@@ -232,14 +234,11 @@ def main(config_path):
                 asr = (t_en @ s2s_attn_mono)
 
             # get clips
-            mel_input_length_all = accelerator.gather(mel_input_length)  # for balanced load
+            mel_input_length_all = accelerator.gather(mel_input_length)
             mel_len = min([int(mel_input_length_all.min().item() / 2 - 1), max_len // 2])
-            mel_len_st = int(mel_input_length.min().item() / 2 - 1)
 
             en = []
             gt = []
-            wav = []
-            st = []
 
             for bib in range(len(mel_input_length)):
                 mel_length = int(mel_input_length[bib].item() / 2)
@@ -248,23 +247,14 @@ def main(config_path):
                 en.append(asr[bib, :, random_start:random_start + mel_len])
                 gt.append(mels[bib, :, (random_start * 2):((random_start + mel_len) * 2)])
 
-                y = waves[bib][(random_start * 2) * 300:((random_start + mel_len) * 2) * 300]
-                wav.append(torch.from_numpy(y).to(device))
-
-                # style reference (better to be different from the GT)
-                random_start = np.random.randint(0, mel_length - mel_len_st)
-                st.append(mels[bib, :, (random_start * 2):((random_start + mel_len_st) * 2)])
-
-            # mask
-            with torch.no_grad():  # get
+            # mask over clipped segment
+            with torch.no_grad():
                 mel_length_cut = torch.where(mel_input_length < mel_len * 2, mel_input_length, torch.tensor(mel_len * 2))
                 mel_cut_mask = length_to_mask(mel_length_cut).to('cuda')
 
             en = torch.stack(en)
             gt = torch.stack(gt).detach()
-            st = torch.stack(st).detach()
 
-            # clip too short to be used by the style encoder
             if gt.shape[-1] < 80:
                 continue
 
@@ -272,32 +262,14 @@ def main(config_path):
                 real_norm = log_norm(gt.unsqueeze(1)).squeeze(1).detach()
                 F0_real, _, _ = model.pitch_extractor(gt.unsqueeze(1))
 
-            s = model.style_encoder(st.unsqueeze(1) if multispeaker else gt.unsqueeze(1))
-
             pe = torch.cat([real_norm.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
-            loss_cfm, attn_maps  = model.decoder.compute_loss(gt, ~mel_cut_mask.unsqueeze(1), mu=en, c=s, seq_style=pe,
-                                                              p_mask=~mel_cut_mask.unsqueeze(1))
 
-            ### wait for test
-            if learn_monoAttn:
-                #from utilities.vis import save_plot
-                blk, batch, head, ql, kl = attn_maps.shape
-                mask_delta = np.random.randint(3, 8) * 0.1  # (0, 0.8)
-                mel_len_for_guidance_matrix = torch.ones([len(mel_input_length), ]) * mel_len
-                guide_matrix = make_guided_attention_masks2(ilens=mel_len_for_guidance_matrix,
-                                                            olens=mel_len_for_guidance_matrix,
-                                                            max_len=ql, base_sigma=mask_delta,
-                                                            eps=0.002)  # (b, ilens_max, olens_max)
-                #save_plot(guide_matrix[0].detach().cpu(), f"train_monoMask_guassion.png")
-                guide_matrix = guide_matrix.unsqueeze(1).unsqueeze(0).repeat(blk, 1, head, 1, 1)
-                loss_monoAttn = torch.mean(attn_maps * guide_matrix)
+            # CFMDecoderV4: no global c, no mask/p_mask args
+            loss_cfm, _ = model.decoder.compute_loss(gt, mu=en, seq_style=pe)
 
-            else:
-                loss_monoAttn = 0
-
-            # generator loss (L1 part)
+            # generator loss
             optimizer.zero_grad()
-            if epoch >= TMA_epoch:  # start TMA training
+            if epoch >= TMA_epoch:
                 loss_s2s = 0
                 for _s2s_pred, _text_input, _text_length in zip(s2s_pred, texts, input_lengths):
                     loss_s2s += F.cross_entropy(_s2s_pred[:_text_length], _text_input[:_text_length])
@@ -308,42 +280,31 @@ def main(config_path):
                 loss_mono = 0
 
             g_loss = loss_params.lambda_mel * loss_cfm + \
-                loss_params.lambda_adv * loss_cfm + \
                 loss_params.lambda_mono * loss_mono + \
-                loss_params.lambda_s2s * loss_s2s + \
-                loss_params.lambda_monoAttn * loss_monoAttn
+                loss_params.lambda_s2s * loss_s2s
 
             running_loss += accelerator.gather(loss_cfm).mean().item()
             accelerator.backward(g_loss)
             optimizer.step('text_encoder')
-            optimizer.step('style_encoder')
             optimizer.step('decoder')
 
             if epoch >= TMA_epoch:
                 optimizer.step('text_aligner')
-                #optimizer.step('pitch_extractor')
 
             iters = iters + 1
             if (i + 1) % log_interval == 0 and accelerator.is_main_process:
                 log_print(
-                    'Epoch [%d/%d], Step [%d/%d], Cfm Loss: %.5f, Gen Loss: %.5f, Mono Loss: %.5f, S2S Loss: %.5f, monoAttn: %.5f'
-                    % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, running_loss / log_interval, g_loss, loss_mono, loss_s2s, loss_monoAttn), logger)
+                    'Epoch [%d/%d], Step [%d/%d], Cfm Loss: %.5f, Gen Loss: %.5f, Mono Loss: %.5f, S2S Loss: %.5f'
+                    % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, running_loss / log_interval, g_loss, loss_mono, loss_s2s), logger)
             if (i + 1) % log_interval == 0:
                 logger.info(
-                    'Epoch [%d/%d], Step [%d/%d], Cfm Loss: %.5f, Adv Loss: %.5f, Mono Loss: %.5f, S2S Loss: %.5f, monoAttn: %.5f'
+                    'Epoch [%d/%d], Step [%d/%d], Cfm Loss: %.5f, Gen Loss: %.5f, Mono Loss: %.5f, S2S Loss: %.5f'
                     % (epoch + 1, epochs, i + 1, len(train_list) // batch_size, running_loss / log_interval,
-                       loss_cfm.item(), loss_mono, loss_s2s, loss_monoAttn))
+                       g_loss, loss_mono, loss_s2s))
                 writer.add_scalar('train/cfm_loss', running_loss / log_interval, iters)
                 writer.add_scalar('train/gen_loss', g_loss, iters)
                 writer.add_scalar('train/mono_loss', loss_mono, iters)
                 writer.add_scalar('train/s2s_loss', loss_s2s, iters)
-                writer.add_scalar('train/monoAttn', loss_monoAttn, iters)
-
-                if hasattr(model.decoder, 'estimator'):
-                    for blk_idx, blk in enumerate(model.decoder.estimator.blocks):
-                        norm_val = getattr(blk.block, '_gate_mca_norm', None)
-                        if norm_val is not None:
-                            writer.add_scalar(f'train/gate_mca_norm_blk{blk_idx}', norm_val, iters)
                 running_loss = 0
                 print('Time elasped:', time.time() - start_time)
 
@@ -379,34 +340,27 @@ def main(config_path):
 
                 # encode
                 t_en = model.text_encoder(texts, input_lengths, text_mask)
-
                 asr = (t_en @ s2s_attn)
 
                 # get clips
-                mel_input_length_all = accelerator.gather(mel_input_length)  # for balanced load
                 mel_len = min([int(mel_input_length.min().item() / 2 - 1), max_len // 2])
 
                 en = []
                 gt = []
-                wav = []
                 for bib in range(len(mel_input_length)):
                     mel_length = int(mel_input_length[bib].item() / 2)
-
                     random_start = np.random.randint(0, mel_length - mel_len)
                     en.append(asr[bib, :, random_start:random_start + mel_len])
                     gt.append(mels[bib, :, (random_start * 2):((random_start + mel_len) * 2)])
-                    y = waves[bib][(random_start * 2) * 300:((random_start + mel_len) * 2) * 300]
-                    wav.append(torch.from_numpy(y).to('cuda'))
 
                 en = torch.stack(en)
                 gt = torch.stack(gt).detach()
 
-                F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1))
-                s = model.style_encoder(gt.unsqueeze(1))
+                F0_real, _, _ = model.pitch_extractor(gt.unsqueeze(1))
                 real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
-
                 pe = torch.cat([real_norm.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
-                loss_cfm, attn_maps = model.decoder.compute_loss(gt, mask, mu=en, c=s, seq_style=pe, p_mask=mask)
+
+                loss_cfm, _ = model.decoder.compute_loss(gt, mu=en, seq_style=pe)
                 loss_test += accelerator.gather(loss_cfm).mean().item()
                 iters_test += 1
 
@@ -432,22 +386,51 @@ def main(config_path):
             generator.eval()
             generator.remove_weight_norm()
 
+            cfg_strength_val = 3 if config['cfm_config'].get('cfg_dropout', 0) > 0 else None
+
             with torch.no_grad():
                 for bib in range(len(asr)):
                     mel_length = int(mel_input_length[bib].item())
-                    gt = mels[bib, :, :mel_length].unsqueeze(0)
-                    en = asr[bib, :, :mel_length // 2].unsqueeze(0)
 
-                    F0_real, _, _ = model.pitch_extractor(gt.unsqueeze(1))
-                    #F0_real = F0_real.unsqueeze(0)
-                    s = model.style_encoder(gt.unsqueeze(1))
-                    real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
+                    # Require enough frames for a 30/70 split
+                    if mel_length < 10:
+                        continue
 
-                    pe = torch.cat([real_norm.unsqueeze(1), F0_real.unsqueeze(1)], dim=1)
-                    cfg_strength = 3 if cfg_dropout > 0 else None
-                    mel_rec, _ = model.decoder(mu=en, mask=mask, n_timesteps=200, temperature=1.0, c=s, seq_style=pe, p_mask=mask, cfg_strength=cfg_strength)
+                    # 30/70 split: tgt = first 70%, ref = next 30%
+                    # Aligns inference mask ratio with training (mask_ratio_min=0.7)
+                    ref_len = (mel_length * 3 // 10 // 2) * 2   # 30% of total, rounded to even
+                    tgt_len = (mel_length * 7 // 10 // 2) * 2   # 70% of total, rounded to even
+                    asr_ref = ref_len // 2
+                    asr_tgt = tgt_len // 2
 
-                    # add vocoder
+                    tgt_mel = mels[bib, :, :tgt_len].unsqueeze(0)                       # [1, 80, tgt_len]
+                    ref_mel = mels[bib, :, tgt_len:tgt_len + ref_len].unsqueeze(0)      # [1, 80, ref_len]
+
+                    en_tgt = asr[bib, :, :asr_tgt].unsqueeze(0)                         # [1, dim, asr_tgt]
+                    en_ref = asr[bib, :, asr_tgt:asr_tgt + asr_ref].unsqueeze(0)        # [1, dim, asr_ref]
+
+                    # Pitch/energy for target and reference
+                    # (using ground-truth target prosody for validation logging)
+                    F0_tgt, _, _ = model.pitch_extractor(tgt_mel.unsqueeze(1))
+                    F0_ref, _, _ = model.pitch_extractor(ref_mel.unsqueeze(1))
+                    norm_tgt = log_norm(tgt_mel.unsqueeze(1)).squeeze(1)
+                    norm_ref = log_norm(ref_mel.unsqueeze(1)).squeeze(1)
+                    pe_tgt = torch.cat([norm_tgt.unsqueeze(1), F0_tgt.unsqueeze(1)], dim=1)
+                    pe_ref = torch.cat([norm_ref.unsqueeze(1), F0_ref.unsqueeze(1)], dim=1)
+
+                    # ICL inference: ref provides speaker/style, tgt is synthesised
+                    mel_rec, _ = model.decoder(
+                        mu_tgt=en_tgt,
+                        n_timesteps=200,
+                        temperature=1.0,
+                        cond_ref=ref_mel,
+                        mu_ref=en_ref,
+                        seq_style_tgt=pe_tgt,
+                        seq_style_ref=pe_ref,
+                        cfg_strength=cfg_strength_val,
+                        return_attn_map=False,
+                    )
+
                     c = mel_rec.squeeze()
                     y_g_hat = generator(c.unsqueeze(0))
 

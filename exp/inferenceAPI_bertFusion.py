@@ -121,15 +121,18 @@ class InferenceAPI:
     def _get_tokens(self, text):
         ps = self.global_phonemizer.phonemize([text.strip()])
         ps = word_tokenize(ps[0])
-        tokens = self.text_cleaner(' '.join(ps))
+        tokens = self.text_cleaner(' '.join(ps))   #  tokens and ps may have different length due to unrecognized character!
         tokens.insert(0, 0)
         tokens.append(0)    # add this to consistence with training
         ps_append = ' ' + ' '.join(ps) + ' '
+        #ps_append_len = len(ps_append)
+        #print(len(tokens), ps_append_len)
         return ps_append, torch.LongTensor(tokens).to(self.device).unsqueeze(0)
 
     @torch.no_grad()
     def synthesize_one(self, text, ref_wav_path, ref_txt, alpha=0.3, beta=0.7, diffusion_steps=5, cfg_strength=3.0,
-                       hierStyle=True, drop_trend=False, return_pitch=False, trend_strength=1.0, need_uv_mask=True, return_trd_index=False):  # trend_strength/need_uv_mask
+                       hierStyle=True, drop_trend=False, return_pitch=False, trend_strength=1.0, need_uv_mask=True, return_trd_index=False,
+                       return_attn_map=False):  # trend_strength/need_uv_mask
         """Synthesize a single speech sample."""
         ps, tokens = self._get_tokens(text)
         ps_ref, tokens_ref = self._get_tokens(ref_txt)
@@ -196,14 +199,26 @@ class InferenceAPI:
         uv_masks = build_voiced_mask(list(ps)).unsqueeze(0).to(s2s.device)
         uv_ref_masks = build_voiced_mask(list(ps_ref)).unsqueeze(0).to(s2s.device)
 
+        # Align uv masks to match s2s/pred_aln phoneme dims (text_cleaner may drop unknown chars)
+        """
+        s2s_phn_dim = s2s.size(1)
+        if uv_ref_masks.size(-1) != s2s_phn_dim:
+            uv_ref_masks = uv_ref_masks[:, :s2s_phn_dim] if uv_ref_masks.size(-1) > s2s_phn_dim \
+                else F.pad(uv_ref_masks, (0, s2s_phn_dim - uv_ref_masks.size(-1)), "constant", 0)
+        tgt_phn_dim = pred_aln_trg.size(0)  # target phoneme count
+        if uv_masks.size(-1) != tgt_phn_dim:
+            uv_masks = uv_masks[:, :tgt_phn_dim] if uv_masks.size(-1) > tgt_phn_dim \
+                else F.pad(uv_masks, (0, tgt_phn_dim - uv_masks.size(-1)), "constant", 0)
+        """
+
         if not need_uv_mask:
             uv_masks = torch.ones_like(uv_masks).to(uv_masks.device)
         if return_trd_index:
-            trd, trd_index = self.model.predictor.trd_encoding(F0_ref, s2s, uv_ref_masks, uv_masks, pred_aln_trg.unsqueeze(0), drop_trend=drop_trend, return_trd_index=return_trd_index)  # bert_trend_fused embeds
+            trd, trd_index = self.model.predictor.trd_encoding(F0_ref, s2s, uv_ref_masks, uv_masks, pred_aln_trg.unsqueeze(0),
+                                                               drop_trend=drop_trend, return_trd_index=return_trd_index)  # bert_trend_fused embeds
         else:
-            trd = self.model.predictor.trd_encoding(F0_ref, s2s, uv_ref_masks, uv_masks,
-                                                               pred_aln_trg.unsqueeze(0), drop_trend=drop_trend,
-                                                               return_trd_index=return_trd_index)  # bert_trend_fused embeds
+            trd = self.model.predictor.trd_encoding(F0_ref, s2s, uv_ref_masks, uv_masks, pred_aln_trg.unsqueeze(0), drop_trend=drop_trend,
+                                                    return_trd_index=return_trd_index)  # bert_trend_fused embeds
         en_new = torch.cat([en_new, trd * trend_strength], dim=1)  #
 
         # get predicted pitch energy
@@ -211,12 +226,19 @@ class InferenceAPI:
         pe = torch.cat([N_pred.unsqueeze(1), F0_pred.unsqueeze(1)], dim=1)
 
         # Decode Mel
-        mel_rec, attn_map = self.model.decoder(
+        mel_rec, attn_maps = self.model.decoder(
             mu=asr_new, mask=None, n_timesteps=200, temperature=1.0,
-            c=ref, seq_style=pe, p_mask=None, cfg_strength=cfg_strength, return_attn_map=False)
+            c=ref, seq_style=pe, p_mask=None, cfg_strength=cfg_strength,
+            return_attn_map=return_attn_map)
 
         # Vocode
         audio = self.vocoder(mel_rec).squeeze().cpu().numpy()
+        if return_attn_map:
+            if return_pitch:
+                if return_trd_index:
+                    return audio, F0_pred, F0_ref, N_pred, N_real, trd_index.squeeze(), attn_maps
+                return audio, F0_pred, F0_ref, N_pred, N_real, attn_maps
+            return audio[..., :-50], attn_maps
         if return_pitch:
             if return_trd_index:
                 return audio, F0_pred, F0_ref, N_pred, N_real, trd_index.squeeze()
@@ -387,6 +409,7 @@ if __name__ == '__main__':
         #
 
         # calcuate dtw of notrend, trend, trendStren5
+        """
         pith_ref, energy_ref = extract_psd_single(reference_wav3)
         pitch_variant1_syn, energy_variant1_syn = extract_psd_single(out_wav_trend_variant1)
         pitch_variant2_syn, energy_variatn2_syn = extract_psd_single(out_wav_variant2)
@@ -398,7 +421,7 @@ if __name__ == '__main__':
                                                               energy_trend_syn, need_interp_unvoice=True)
         p_variant1_diff, e_variant1_diff = calcualte_pitch_energy_dtw(pith_ref, pitch_variant1_syn, energy_ref,
                                                                       energy_variant1_syn, need_interp_unvoice=True)
-
+        """
         plot_f0_comparison(
             contours=[F0_ref[0], pitch_trend_syn, pitch_variant1_syn],
             labels=["pitch_ref", "pitch_base", f"pitch_{variant1}"],

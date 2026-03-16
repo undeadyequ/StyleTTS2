@@ -25,7 +25,6 @@ from exp2.experiments.fine_grained_eval import FineGrainedEvaluation, FineGraine
 from exp.exp_utils import get_synStyle_from_file, get_synText_from_file
 from mel_config import MelConfig
 
-
 def run_random_evaluation(args):
     """Run standard random evaluation."""
 
@@ -84,8 +83,8 @@ def run_fine_grained_eval(args):
     if args.category in ["length_ratio", "position"]:
         fine_config = FineGrainedConfig.get_fine_config(args.category)
         fine_labels = fine_config["labels"]
-        text_pattern = fine_config["text_pattern"]
-        style_file = args.style_file or f"exp/data/{fine_config['style_file']}"
+        text_pattern = fine_config["text_pattern"]                               # decided by fine_config
+        style_file = args.style_file or f"exp/data2/{fine_config['style_file']}"  # decide by fine_config or args input
         print(f"Using predefined config: {fine_config['description']}")
     else:
         # Custom fine categories from CLI
@@ -95,7 +94,7 @@ def run_fine_grained_eval(args):
 
     # Build fine_categories dict: {label: [texts]}
     fine_categories = {}
-    text_dir = args.text_dir or "exp/data"
+    text_dir = args.text_dir or "exp/data2"
     for label in fine_labels:
         text_file = os.path.join(text_dir, text_pattern.format(label=label))
         if os.path.exists(text_file):
@@ -110,6 +109,7 @@ def run_fine_grained_eval(args):
         return None
 
     # Load styles (shared across all fine categories)
+    print(style_file)
     syn_styles = get_synStyle_from_file(
         style_file,
         split_char='|',
@@ -238,9 +238,9 @@ def main():
     fine_parser.add_argument("--dataset", choices=["esd", "libritts"], required=True, help="Dataset name")
     fine_parser.add_argument("--style-file", default=None,
                              help="Style file path (default: use predefined for category)")
-    fine_parser.add_argument("--text-dir", default="exp/data",
+    fine_parser.add_argument("--text-dir", default="exp/data2",
                              help="Directory containing text files")
-    fine_parser.add_argument("--text-pattern", default="s2_{label}.txt",
+    fine_parser.add_argument("--text-pattern", default="fine_esd_syn_ratio{label}.txt",
                              help="Text file pattern with {label} placeholder")
     fine_parser.add_argument("--fine-labels", nargs="+", default=None,
                              help="Fine category labels (e.g., 05 1 2)")

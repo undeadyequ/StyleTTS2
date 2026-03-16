@@ -349,8 +349,11 @@ class StatisticsStage(PipelineStage):
         merged_spk_emo = merged_spk_emo_json  # Use the already-merged JSON data
 
         # Also merge emo_mean for the emo_mean CSV
-        agg_emo_mean_csv_path = output_dir / "stats_emo_mean_aggregated.csv"
-        agg_emo_mean_json_path = helper_dir / "stats_emo_mean_aggregated.json"
+        # Use category-specific filenames when fine_category_name is provided (fine eval only)
+        fine_category_name = context.get("fine_category_name", "")
+        _cat_suffix = f"_{fine_category_name}" if fine_category_name else ""
+        agg_emo_mean_csv_path = output_dir / f"stats_emo_mean_aggregated{_cat_suffix}.csv"
+        agg_emo_mean_json_path = helper_dir / f"stats_emo_mean_aggregated{_cat_suffix}.json"
         if agg_emo_mean_json_path.exists():
             with open(agg_emo_mean_json_path, "r") as f:
                 existing_emo_mean = json.load(f)
@@ -388,8 +391,8 @@ class StatisticsStage(PipelineStage):
                     )
 
                     # Save separate pitch and energy CSVs
-                    pitch_csv_path = output_dir / "stats_emo_mean_pitch_aggregated.csv"
-                    energy_csv_path = output_dir / "stats_emo_mean_energy_aggregated.csv"
+                    pitch_csv_path = output_dir / f"stats_emo_mean_pitch_aggregated{_cat_suffix}.csv"
+                    energy_csv_path = output_dir / f"stats_emo_mean_energy_aggregated{_cat_suffix}.csv"
                     pivot_df_pitch.to_csv(pitch_csv_path, index=True)
                     pivot_df_energy.to_csv(energy_csv_path, index=True)
 
